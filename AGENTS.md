@@ -28,5 +28,14 @@ regenerate). Reinstall with:
 npx skills@latest add mattpocock/skills
 ```
 
-Run `/setup-matt-pocock-skills` once to record this repo's issue tracker and
-domain-doc conventions below.
+### Issue tracker
+
+Issues and specs live as GitHub issues in `oroszgy/openchamber-litellm-usage`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical roles, label string equal to name: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `GLOSSARY.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
