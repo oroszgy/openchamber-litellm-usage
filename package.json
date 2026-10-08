@@ -11,7 +11,8 @@
     "build:service": "openchamber-guest-bundle --node service/main.ts service/main.js",
     "typecheck": "tsc --noEmit",
     "check": "bun run typecheck && bun run build",
-    "test": "bun test"
+    "test": "bun test",
+    "prototype:layout": "bun status/prototype/serve.ts"
   },
   "devDependencies": {
     "@openchamber/sdk": "^2.0.3",

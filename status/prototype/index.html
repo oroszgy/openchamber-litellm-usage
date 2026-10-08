@@ -1,0 +1,961 @@
+<!doctype html>
+<!--
+  PROTOTYPE — throwaway. Not the extension.
+
+  Question: what should the LiteLLM Usage Work Status section look like inside
+  its 24..320 px height clamp, across states, and where should the provider
+  selector live?
+
+  Target look: the OpenChamber "Usage" panel (screenshot supplied 2026-10-08) —
+  a provider row, then window rows of `label · reset-date · right-aligned value`.
+
+  Three variants, switchable via ?variant= and the floating bottom bar (← / →):
+    A  Native        — the screenshot's row idiom, rolling inline (revealed by height)
+    B  Native+expand — same rows, rolling behind an expander
+    C  Strip         — compact single-strip fallback
+
+  Axes (top-left panel): theme, frame height (24..320), panel width, state,
+  selector surface (header control vs in-panel select).
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Prototype — LiteLLM Usage section layout</title>
+    <style>
+      :root {
+        --proto-bg: #f4f5f7;
+        --proto-panel: #ffffff;
+        --proto-text: #1b1e23;
+        --proto-muted: #6b7280;
+        --proto-sep: #e8eaee;
+        --proto-accent: #2f6fed;
+        --proto-danger: #c8443f;
+        --proto-ctl-bg: #ffffff;
+        --proto-ctl-border: #d3d8e0;
+      }
+      html[data-theme='dark'] {
+        --proto-bg: #0e1014;
+        --proto-panel: #171a21;
+        --proto-text: #e7eaf0;
+        --proto-muted: #9aa3b2;
+        --proto-sep: #2a2f3a;
+        --proto-accent: #6ea8fe;
+        --proto-danger: #f2777a;
+        --proto-ctl-bg: #0e1219;
+        --proto-ctl-border: #2b3341;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+      }
+      body {
+        background: var(--proto-bg);
+        color: var(--proto-text);
+        font: 13px/1.45 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+          Helvetica, Arial, sans-serif;
+        display: flex;
+        align-items: flex-start;
+        justify-content: center;
+        padding: 64px 24px 120px;
+      }
+
+      /* ---- mock Work Status panel (host chrome) ---- */
+      .panel {
+        background: var(--proto-panel);
+        border: 1px solid var(--proto-sep);
+        border-radius: 12px;
+        overflow: hidden;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+        transition: width 0.12s ease;
+      }
+      .panel-title {
+        padding: 10px 14px;
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--proto-muted);
+        border-bottom: 1px solid var(--proto-sep);
+      }
+      .ws-section + .ws-section {
+        border-top: 1px solid var(--proto-sep);
+      }
+      .ws-header {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 7px 12px;
+        min-height: 32px;
+      }
+      .ws-chevron {
+        color: var(--proto-muted);
+        font-size: 10px;
+      }
+      .ws-title {
+        font-size: 12.5px;
+        font-weight: 600;
+        flex: 1;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .ws-inert .ws-body {
+        padding: 2px 12px 12px;
+        color: var(--proto-muted);
+        font-size: 12px;
+      }
+
+      /* host-rendered header controls (faux setStatusControls) */
+      .hdr-select,
+      .hdr-btn {
+        font: inherit;
+        font-size: 11px;
+        color: var(--proto-text);
+        background: var(--proto-ctl-bg);
+        border: 1px solid var(--proto-ctl-border);
+        border-radius: 6px;
+        height: 22px;
+      }
+      .hdr-select {
+        max-width: 110px;
+        padding: 0 4px;
+      }
+      .hdr-btn {
+        width: 24px;
+        cursor: pointer;
+      }
+
+      /* ---- the guest frame (this is the thing being designed) ---- */
+      .frame {
+        container: frame / size;
+        position: relative;
+        overflow: hidden;
+        transition: height 0.1s ease;
+      }
+      .frame.bounds {
+        outline: 1px dashed color-mix(in srgb, var(--proto-accent) 50%, transparent);
+        outline-offset: -1px;
+      }
+      .frame-body {
+        height: 100%;
+        overflow: hidden;
+      }
+      .muted {
+        color: var(--proto-muted);
+      }
+
+      /* ---------- the usage row language (matches the target screenshot) ---------- */
+      .usage {
+        padding: 2px 0 4px;
+      }
+      .uhead {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 14px 4px;
+      }
+      .uhead .uicon {
+        display: inline-flex;
+        color: var(--proto-text);
+      }
+      .uhead .uname {
+        font-size: 13.5px;
+        font-weight: 600;
+      }
+      .uhead .uhead-val {
+        display: none;
+        margin-left: auto;
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
+      }
+      .urows {
+        padding: 0 0 6px;
+      }
+      .urow {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        padding: 4px 14px;
+        font-size: 13px;
+      }
+      .urow .ulabel {
+        white-space: nowrap;
+      }
+      .urow .umeta {
+        color: var(--proto-muted);
+        font-size: 12.5px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .urow .uval {
+        margin-left: auto;
+        white-space: nowrap;
+        font-variant-numeric: tabular-nums;
+      }
+      .urow .uval.danger {
+        color: var(--proto-danger);
+      }
+      .usublabel {
+        padding: 6px 14px 2px;
+        color: var(--proto-muted);
+        font-size: 12px;
+      }
+      .udivider {
+        height: 1px;
+        background: var(--proto-sep);
+        margin: 6px 0;
+      }
+
+      /* compact strip fallback */
+      .figStrip {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 6px 8px;
+        padding: 8px 12px;
+      }
+      .figStrip .name {
+        font-weight: 600;
+        white-space: nowrap;
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+      }
+      .figStrip .meter {
+        width: 54px;
+        height: 6px;
+        border-radius: 999px;
+        background: color-mix(in srgb, var(--proto-sep) 90%, transparent);
+        overflow: hidden;
+        display: inline-block;
+      }
+      .figStrip .meter > i {
+        display: block;
+        height: 100%;
+        background: var(--proto-accent);
+      }
+      .figStrip .meter > i.danger {
+        background: var(--proto-danger);
+      }
+      .figStrip .spend,
+      .figStrip .reset,
+      .figStrip .roll {
+        color: var(--proto-muted);
+        font-size: 12px;
+      }
+      .figStrip .roll {
+        display: inline-flex;
+        gap: 8px;
+        margin-left: auto;
+      }
+      .tnum {
+        font-variant-numeric: tabular-nums;
+      }
+
+      /* expander (variant B) */
+      details.uroll {
+        padding: 0 14px;
+      }
+      details.uroll > summary {
+        list-style: none;
+        cursor: pointer;
+        color: var(--proto-accent);
+        font-size: 12px;
+        padding: 4px 0;
+      }
+      details.uroll > summary::before {
+        content: '▸ ';
+      }
+      details.uroll[open] > summary::before {
+        content: '▾ ';
+      }
+
+      /* ---------- shared states ---------- */
+      .state {
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        text-align: center;
+        flex-wrap: wrap;
+        padding: 8px 14px;
+      }
+      .state .title {
+        font-weight: 600;
+      }
+      .state .hint {
+        color: var(--proto-muted);
+        font-size: 12px;
+        width: 100%;
+      }
+      .state.error .title {
+        color: var(--proto-danger);
+      }
+      .spinner {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        border: 2px solid color-mix(in srgb, var(--proto-text) 25%, transparent);
+        border-top-color: var(--proto-text);
+        animation: spin 0.8s linear infinite;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      .code {
+        font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;
+        background: color-mix(in srgb, var(--proto-sep) 70%, transparent);
+        border-radius: 4px;
+        padding: 1px 5px;
+        color: var(--proto-muted);
+      }
+      .retry {
+        font: inherit;
+        font-size: 11px;
+        color: var(--proto-text);
+        background: transparent;
+        border: 1px solid var(--proto-ctl-border);
+        border-radius: 6px;
+        height: 22px;
+        padding: 0 8px;
+        cursor: pointer;
+      }
+
+      /* in-panel selector (faux mountSelect) */
+      .inline-controls {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 14px 0;
+      }
+      .inline-controls select {
+        font: inherit;
+        font-size: 12px;
+        color: var(--proto-text);
+        background: var(--proto-ctl-bg);
+        border: 1px solid var(--proto-ctl-border);
+        border-radius: 6px;
+        height: 24px;
+        padding: 0 4px;
+        flex: 1;
+        min-width: 0;
+      }
+
+      /* ---------- height-driven adaptation (container queries) ---------- */
+      @container frame (max-height: 150px) {
+        .r-rollhead,
+        .r-roll {
+          display: none;
+        }
+      }
+      @container frame (max-height: 96px) {
+        .r-balance,
+        details.uroll {
+          display: none;
+        }
+      }
+      @container frame (max-height: 60px) {
+        .r-window:not(.primary) {
+          display: none;
+        }
+      }
+      @container frame (max-height: 34px) {
+        .urows {
+          display: none;
+        }
+        .uhead {
+          padding-top: 6px;
+          padding-bottom: 6px;
+        }
+        .uhead .uhead-val {
+          display: inline;
+        }
+        /* compact strip behaves the same way */
+        .figStrip .spend,
+        .figStrip .reset,
+        .figStrip .roll {
+          display: none;
+        }
+      }
+      @container frame (max-height: 64px) {
+        .figStrip .roll {
+          display: none;
+        }
+      }
+      @container frame (max-height: 44px) {
+        .figStrip .spend,
+        .figStrip .reset {
+          display: none;
+        }
+      }
+
+      /* ---------- prototype chrome (not the design) ---------- */
+      .proto-controls {
+        position: fixed;
+        top: 12px;
+        left: 12px;
+        z-index: 50;
+        background: #11151c;
+        color: #dbe2ee;
+        border: 1px solid #2b3341;
+        border-radius: 10px;
+        padding: 10px 12px;
+        font-size: 11px;
+        width: 216px;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+      }
+      .proto-controls h2 {
+        margin: 0 0 8px;
+        font-size: 10px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #8b95a7;
+      }
+      .proto-controls label {
+        display: block;
+        margin: 7px 0 2px;
+        color: #9aa4b5;
+      }
+      .proto-controls .val {
+        color: #e7eaf0;
+        float: right;
+        font-variant-numeric: tabular-nums;
+      }
+      .proto-controls input[type='range'] {
+        width: 100%;
+        accent-color: #6ea8fe;
+      }
+      .proto-controls select {
+        width: 100%;
+        font: inherit;
+        color: #e7eaf0;
+        background: #0e1219;
+        border: 1px solid #2b3341;
+        border-radius: 6px;
+        height: 24px;
+      }
+      .seg {
+        display: flex;
+        gap: 4px;
+        margin-top: 2px;
+      }
+      .seg button {
+        flex: 1;
+        font: inherit;
+        color: #cbd3e0;
+        background: #0e1219;
+        border: 1px solid #2b3341;
+        border-radius: 6px;
+        height: 24px;
+        cursor: pointer;
+      }
+      .seg button.on {
+        background: #2f6fed;
+        border-color: #2f6fed;
+        color: #fff;
+      }
+      .proto-switcher {
+        position: fixed;
+        bottom: 18px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 50;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        background: #11151c;
+        color: #f0f3f8;
+        border: 1px solid #2b3341;
+        border-radius: 999px;
+        padding: 6px 10px;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+      }
+      .proto-switcher button {
+        font: inherit;
+        font-size: 15px;
+        color: #f0f3f8;
+        background: transparent;
+        border: 0;
+        cursor: pointer;
+        width: 26px;
+        height: 26px;
+        border-radius: 50%;
+      }
+      .proto-switcher button:hover {
+        background: #232a36;
+      }
+      .proto-switcher .label {
+        min-width: 178px;
+        text-align: center;
+        font-size: 12px;
+        font-variant-numeric: tabular-nums;
+      }
+    </style>
+  </head>
+  <body data-theme="light">
+    <div class="panel" id="panel">
+      <div class="panel-title">Work Status</div>
+
+      <section class="ws-section ws-inert">
+        <div class="ws-header">
+          <span class="ws-chevron">▸</span>
+          <span class="ws-title">Changes</span>
+        </div>
+        <div class="ws-body">3 files changed · +42 −11</div>
+      </section>
+
+      <section class="ws-section" id="target"><!-- rendered --></section>
+
+      <section class="ws-section ws-inert">
+        <div class="ws-header">
+          <span class="ws-chevron">▸</span>
+          <span class="ws-title">Checks</span>
+        </div>
+        <div class="ws-body">2 passing · 1 running</div>
+      </section>
+    </div>
+
+    <div class="proto-controls">
+      <h2>Prototype controls</h2>
+      <label>Theme</label>
+      <div class="seg" id="themeSeg">
+        <button data-theme="light">Light</button>
+        <button data-theme="dark">Dark</button>
+      </div>
+      <label>Frame height <span class="val" id="heightVal"></span></label>
+      <input type="range" id="height" min="24" max="320" step="2" />
+      <label>Panel width <span class="val" id="widthVal"></span></label>
+      <input type="range" id="width" min="220" max="460" step="2" />
+      <label>State</label>
+      <select id="state">
+        <option value="normal">normal (budgeted)</option>
+        <option value="exhausted">exhausted</option>
+        <option value="unlimited">unbudgeted / unlimited</option>
+        <option value="degraded">degraded (no rolling)</option>
+        <option value="loading">loading</option>
+        <option value="empty">no provider found</option>
+        <option value="error">fatal error</option>
+      </select>
+      <label>Provider selector surface</label>
+      <div class="seg" id="selectorSeg">
+        <button data-sel="header">Header</button>
+        <button data-sel="inline">In-panel</button>
+      </div>
+      <label>&nbsp;</label>
+      <div class="seg" id="boundsSeg">
+        <button data-bounds="on">Bounds on</button>
+        <button data-bounds="off">Off</button>
+      </div>
+    </div>
+
+    <div class="proto-switcher">
+      <button id="prev" aria-label="Previous variant">‹</button>
+      <span class="label" id="swLabel"></span>
+      <button id="next" aria-label="Next variant">›</button>
+    </div>
+
+    <script>
+      // ---- state ----
+      const params = new URLSearchParams(location.search);
+      const VARIANTS = [
+        { key: 'A', name: 'Native' },
+        { key: 'B', name: 'Native+expand' },
+        { key: 'C', name: 'Strip' },
+      ];
+      const $ = (s) => document.querySelector(s);
+
+      let variant = params.get('variant') || 'B';
+      let state = params.get('state') || 'normal';
+      let height = Number(params.get('height') || 170);
+      let width = Number(params.get('width') || 360);
+      let selector = params.get('selector') || 'header';
+      let bounds = (params.get('bounds') || 'on') === 'on';
+      let theme = params.get('theme') || 'light';
+
+      function syncParam(k, v) {
+        params.set(k, v);
+        try {
+          history.replaceState(null, '', '?' + params.toString());
+        } catch (_) {}
+      }
+
+      // ---- data ----
+      const DAY = 864e5;
+      const plusDays = (n) => new Date(Date.now() + n * DAY).toISOString();
+      function todayAt(h, m) {
+        const d = new Date();
+        d.setHours(h, m, 0, 0);
+        if (d.getTime() < Date.now()) d.setDate(d.getDate() + 1);
+        return d.toISOString();
+      }
+
+      function baseData() {
+        return {
+          provider: { id: 'litellm', name: 'LiteLLM', host: 'https://proxy.example.com' },
+          asOf: new Date().toISOString(),
+          balance: {
+            kind: 'remaining',
+            remaining: 37.5,
+            cap: 50,
+            spend: 12.5,
+            exhausted: false,
+            source: 'key',
+          },
+          window: { duration: '30d', resetsAt: plusDays(28), resetDerived: false },
+          budgetWindows: [
+            { duration: '24h', cap: 10, spend: 0, remaining: 10, resetsAt: todayAt(20, 6), resetDerived: true },
+            { duration: '7d', cap: 25, spend: 7, remaining: 18, resetsAt: plusDays(4), resetDerived: true },
+            { duration: '30d', cap: 50, spend: 12.5, remaining: 37.5, resetsAt: plusDays(28), resetDerived: false },
+          ],
+          softBudget: { limit: 40, exceeded: false },
+          rolling: { day: 1.2, week: 8.4, month: 21.0 },
+        };
+      }
+
+      function stateData(s) {
+        const b = baseData();
+        switch (s) {
+          case 'loading':
+            return { loading: true };
+          case 'empty':
+            return { empty: true };
+          case 'error':
+            return {
+              error: {
+                code: 'provider_unreachable',
+                message: 'proxy.example.com did not respond',
+              },
+            };
+          case 'unlimited':
+            return {
+              ...b,
+              balance: { kind: 'unlimited', spend: 12.5, source: 'key' },
+              budgetWindows: b.budgetWindows.map((w) => ({ ...w, cap: null })),
+            };
+          case 'exhausted':
+            return {
+              ...b,
+              balance: { ...b.balance, remaining: 0, spend: 50, exhausted: true },
+              budgetWindows: b.budgetWindows.map((w) =>
+                w.duration === '30d' ? { ...w, spend: w.cap, remaining: 0 } : w,
+              ),
+            };
+          case 'degraded': {
+            const d = { ...b };
+            delete d.rolling;
+            d.degraded = [
+              { figure: 'rolling', code: 'rolling_unavailable', message: 'key has no user_id' },
+            ];
+            return d;
+          }
+          default:
+            return b;
+        }
+      }
+
+      const usd = (n) => {
+        const abs = Math.abs(n);
+        const d = abs > 0 && abs < 1 ? 4 : 2;
+        return (
+          '$' +
+          n.toLocaleString('en-US', {
+            minimumFractionDigits: d,
+            maximumFractionDigits: d,
+          })
+        );
+      };
+      const pct = (b) => (b.cap ? Math.min(100, (b.spend / b.cap) * 100) : 0);
+
+      function fmtReset(iso) {
+        const d = new Date(iso);
+        const now = new Date();
+        const time = d.toLocaleTimeString('en-US', {
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false,
+        });
+        if (d.toDateString() === now.toDateString()) return time;
+        return (
+          d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) +
+          ', ' +
+          time
+        );
+      }
+
+      const ICON = `<svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3v18h18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><rect x="7" y="12" width="3" height="6" fill="currentColor"/><rect x="12" y="7" width="3" height="11" fill="currentColor"/><rect x="17" y="14" width="3" height="4" fill="currentColor"/></svg>`;
+
+      // ---- variant A: native rows, rolling inline ----
+      function windowRows(d) {
+        const b = d.balance;
+        const windows = d.budgetWindows || (d.window ? [d.window] : []);
+        return windows
+          .map((w, i) => {
+            const cap = w.cap ?? b.cap;
+            const value =
+              cap != null
+                ? `${usd(w.spend ?? 0)} / ${usd(cap)}`
+                : `${usd(w.spend ?? 0)} spent`;
+            return `<div class="urow r-window${i === 0 ? ' primary' : ''}">
+              <span class="ulabel">${w.duration || 'budget'}</span>
+              ${w.resetsAt ? `<span class="umeta">${fmtReset(w.resetsAt)}</span>` : ''}
+              <span class="uval">${value}</span>
+            </div>`;
+          })
+          .join('');
+      }
+
+      function balanceRow(d) {
+        const b = d.balance;
+        const unlimited = b.kind === 'unlimited';
+        const value = unlimited ? `${usd(b.spend)} spent` : `${usd(b.remaining)} left`;
+        return `<div class="urow r-balance">
+            <span class="ulabel">${b.source === 'team' ? 'Team balance' : 'Credits balance'}</span>
+            <span class="uval ${b.exhausted ? 'danger' : ''}">${value}</span>
+          </div>`;
+      }
+
+      function rollingRows(d) {
+        if (d.rolling) {
+          const rows = [
+            ['Today', d.rolling.day],
+            ['Last 7 days', d.rolling.week],
+            ['Last 30 days', d.rolling.month],
+          ]
+            .map(
+              ([l, v]) =>
+                `<div class="urow r-roll"><span class="ulabel">${l}</span><span class="uval">${usd(
+                  v,
+                )}</span></div>`,
+            )
+            .join('');
+          return `<div class="usublabel r-rollhead">Rolling spend</div>${rows}`;
+        }
+        if (d.degraded)
+          return `<div class="usublabel r-rollhead">rolling unavailable</div>`;
+        return '';
+      }
+
+      function figNative(d, expander) {
+        const b = d.balance;
+        const unlimited = b.kind === 'unlimited';
+        const headline = unlimited ? `${usd(b.spend)} spent` : `${usd(b.remaining)} left`;
+        let rollBlock = '';
+        if (expander) {
+          if (d.rolling)
+            rollBlock = `<details class="uroll"><summary>Rolling spend</summary>${rollingInner(
+              d,
+            )}</details>`;
+          else if (d.degraded)
+            rollBlock = `<div class="usublabel r-rollhead">rolling unavailable</div>`;
+        } else {
+          rollBlock = rollingRows(d);
+        }
+        return `<div class="usage">
+            <div class="uhead">
+              <span class="uicon">${ICON}</span>
+              <span class="uname">${d.provider.name}</span>
+              <span class="uhead-val">${headline}</span>
+            </div>
+            <div class="urows">
+              ${windowRows(d)}
+              ${balanceRow(d)}
+              ${rollBlock}
+            </div>
+          </div>`;
+      }
+
+      function rollingInner(d) {
+        if (!d.rolling) return '';
+        return [
+          ['Today', d.rolling.day],
+          ['Last 7 days', d.rolling.week],
+          ['Last 30 days', d.rolling.month],
+        ]
+          .map(
+            ([l, v]) =>
+              `<div class="urow"><span class="ulabel">${l}</span><span class="uval">${usd(
+                v,
+              )}</span></div>`,
+          )
+          .join('');
+      }
+
+      // ---- variant C: compact strip ----
+      function figStrip(d) {
+        const b = d.balance;
+        const unlimited = b.kind === 'unlimited';
+        const roll = d.rolling
+          ? `<span class="roll"><span>today ${usd(d.rolling.day)}</span><span>7d ${usd(
+              d.rolling.week,
+            )}</span><span>30d ${usd(d.rolling.month)}</span></span>`
+          : `<span class="muted">rolling unavailable</span>`;
+        const meter = unlimited
+          ? ''
+          : `<span class="meter"><i class="${b.exhausted ? 'danger' : ''}" style="width:${pct(
+              b,
+            )}%"></i></span>`;
+        const amount = unlimited
+          ? `spent ${usd(b.spend)}`
+          : `${usd(b.remaining)} <small class="muted">left</small>`;
+        const spend = unlimited
+          ? `<span class="spend">no budget cap</span>`
+          : `<span class="spend">${usd(b.spend)} / ${usd(b.cap)}</span>`;
+        const reset = d.window
+          ? `<span class="reset">resets ${fmtReset(d.window.resetsAt)}</span>`
+          : '';
+        return `<div class="figStrip">
+            <span class="name">${d.provider.name}</span>
+            <span class="tnum" style="font-weight:700">${amount}</span>
+            ${meter}
+            ${spend}
+            ${reset}
+            ${roll}
+          </div>`;
+      }
+
+      const FIGURES = {
+        A: (d) => figNative(d, false),
+        B: (d) => figNative(d, true),
+        C: figStrip,
+      };
+
+      function stateHTML(kind, d) {
+        if (kind === 'loading')
+          return `<div class="state"><span class="spinner"></span><span class="title">Loading LiteLLM usage…</span></div>`;
+        if (kind === 'empty')
+          return `<div class="state"><span class="title">No LiteLLM provider found</span><span class="hint">Add one to your OpenCode provider config.</span></div>`;
+        if (kind === 'error')
+          return `<div class="state error"><span class="title">${d.error.message}</span><span class="code">${d.error.code}</span><span class="hint"><button class="retry">Retry</button></span></div>`;
+        return '';
+      }
+
+      function renderVariant(d) {
+        if (d.loading) return stateHTML('loading');
+        if (d.empty) return stateHTML('empty');
+        if (d.error) return stateHTML('error', d);
+        return FIGURES[variant](d);
+      }
+
+      // ---- selector surfaces ----
+      const PROVIDERS = [
+        { id: 'litellm', host: 'proxy.example.com' },
+        { id: 'litellm-dev', host: 'dev.example.com' },
+      ];
+      const optionsHTML = () =>
+        PROVIDERS.map((p) => `<option value="${p.id}">${p.id} · ${p.host}</option>`).join('');
+      const headerControls = () =>
+        `<select class="hdr-select">${optionsHTML()}</select><button class="hdr-btn" title="Refresh">⟳</button>`;
+      const inlineControls = () =>
+        `<div class="inline-controls"><select>${optionsHTML()}</select><button class="hdr-btn" title="Refresh">⟳</button></div>`;
+
+      // ---- render ----
+      function render() {
+        document.body.dataset.theme = theme;
+        document.documentElement.dataset.theme = theme;
+        $('#panel').style.width = width + 'px';
+
+        const d = stateData(state);
+        $('#target').innerHTML = `
+          <div class="ws-header">
+            <span class="ws-chevron">▾</span>
+            <span class="ws-title">LiteLLM Usage</span>
+            <span class="ws-actions">${selector === 'header' ? headerControls() : ''}</span>
+          </div>
+          <div class="frame ${bounds ? 'bounds' : ''}" style="height:${height}px">
+            ${selector === 'inline' ? inlineControls() : ''}
+            <div class="frame-body">${renderVariant(d)}</div>
+          </div>`;
+
+        $('#height').value = height;
+        $('#width').value = width;
+        $('#state').value = state;
+        $('#heightVal').textContent = height + ' px';
+        $('#widthVal').textContent = width + ' px';
+        for (const b of $('#selectorSeg').children)
+          b.classList.toggle('on', b.dataset.sel === selector);
+        for (const b of $('#themeSeg').children)
+          b.classList.toggle('on', b.dataset.theme === theme);
+        for (const b of $('#boundsSeg').children)
+          b.classList.toggle('on', (b.dataset.bounds === 'on') === bounds);
+
+        const v = VARIANTS.find((x) => x.key === variant) || VARIANTS[0];
+        $('#swLabel').textContent = `${v.key} — ${v.name}  (${height}px)`;
+
+        const det = document.querySelector('details.uroll');
+        if (det)
+          det.addEventListener('toggle', () => {
+            height = Math.max(24, Math.min(320, height + (det.open ? 84 : -84)));
+            syncParam('height', height);
+            render();
+          });
+
+        try {
+          history.replaceState(null, '', '?' + params.toString());
+        } catch (_) {}
+      }
+
+      function showVariant(key) {
+        variant = key;
+        syncParam('variant', key);
+        render();
+      }
+      const step = (dir) => {
+        const i = VARIANTS.findIndex((x) => x.key === variant);
+        showVariant(VARIANTS[(i + dir + VARIANTS.length) % VARIANTS.length].key);
+      };
+
+      // ---- controls ----
+      $('#height').addEventListener('input', (e) => {
+        height = Number(e.target.value);
+        syncParam('height', height);
+        render();
+      });
+      $('#width').addEventListener('input', (e) => {
+        width = Number(e.target.value);
+        syncParam('width', width);
+        render();
+      });
+      $('#state').addEventListener('change', (e) => {
+        state = e.target.value;
+        syncParam('state', state);
+        render();
+      });
+      $('#selectorSeg').addEventListener('click', (e) => {
+        if (!e.target.dataset.sel) return;
+        selector = e.target.dataset.sel;
+        syncParam('selector', selector);
+        render();
+      });
+      $('#themeSeg').addEventListener('click', (e) => {
+        if (!e.target.dataset.theme) return;
+        theme = e.target.dataset.theme;
+        syncParam('theme', theme);
+        render();
+      });
+      $('#boundsSeg').addEventListener('click', (e) => {
+        if (!e.target.dataset.bounds) return;
+        bounds = e.target.dataset.bounds === 'on';
+        syncParam('bounds', bounds ? 'on' : 'off');
+        render();
+      });
+      $('#prev').addEventListener('click', () => step(-1));
+      $('#next').addEventListener('click', () => step(1));
+      document.addEventListener('keydown', (e) => {
+        const tag = (document.activeElement && document.activeElement.tagName) || '';
+        if (/INPUT|TEXTAREA|SELECT/.test(tag)) return;
+        if (e.key === 'ArrowLeft') step(-1);
+        if (e.key === 'ArrowRight') step(1);
+      });
+
+      render();
+    </script>
+  </body>
+</html>
