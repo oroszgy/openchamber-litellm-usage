@@ -1,0 +1,43 @@
+{
+  "name": "litellm-usage",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OpenChamber Work Status section showing LiteLLM proxy usage and credits balance.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "build": "bun run build:status && bun run build:service",
+    "build:status": "openchamber-guest-bundle status/main.ts status/main.js",
+    "build:service": "openchamber-guest-bundle --node service/main.ts service/main.js",
+    "typecheck": "tsc --noEmit",
+    "check": "bun run typecheck && bun run build",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@openchamber/sdk": "^2.0.3",
+    "@types/bun": "^1.3.0",
+    "typescript": "^5.9.0"
+  },
+  "openchamber": {
+    "apiVersion": 1,
+    "engines": {
+      "openchamber": ">=2.0.0"
+    },
+    "contributes": {
+      "panel": {
+        "id": "litellm-usage",
+        "name": "LiteLLM Usage",
+        "icon": "icon.svg"
+      },
+      "statusSection": {
+        "entry": "status/index.html",
+        "title": "LiteLLM Usage",
+        "height": 120
+      },
+      "service": {
+        "entry": "service/main.js",
+        "runtime": "host"
+      }
+    }
+  }
+}

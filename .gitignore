@@ -1,0 +1,10 @@
+node_modules/
+*.log
+.DS_Store
+
+# Vendored agent skills (regenerable from mattpocock/skills, pinned by the lock)
+.agents/
+skills-lock.json
+
+# OpenChamber browser-tool scratch output
+.openchamber/
