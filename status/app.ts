@@ -74,7 +74,7 @@ export function start(host: GuestHost, root: HTMLElement): void {
   }
 
   function showUsage(usage: Usage): void {
-    const view = buildView(usage, new Date(usage.asOf), 'UTC');
+    const view = buildView(usage);
     const nodes: Node[] = [line('llu-provider', view.provider), line('llu-headline', view.headline)];
 
     if (view.rolling.length > 0) {

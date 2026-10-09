@@ -30,7 +30,7 @@ export function formatUsd(value: number): string {
   })}`;
 }
 
-export function buildView(usage: Usage, _now: Date, _timeZone: string): View {
+export function buildView(usage: Usage): View {
   return {
     provider: usage.provider.name,
     headline: `${formatUsd(usage.spend)} spent`,

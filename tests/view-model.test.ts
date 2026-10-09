@@ -15,11 +15,7 @@ test('formatUsd uses two decimals, four under a dollar', () => {
 });
 
 test('buildView formats spend and the rolling rows', () => {
-  const view = buildView(
-    { ...base, rolling: { day: 1.2, week: 8.4, month: 21 } },
-    new Date(base.asOf),
-    'UTC',
-  );
+  const view = buildView({ ...base, rolling: { day: 1.2, week: 8.4, month: 21 } });
 
   expect(view.provider).toBe('LiteLLM');
   expect(view.headline).toBe('$1,536.61 spent');
@@ -32,19 +28,15 @@ test('buildView formats spend and the rolling rows', () => {
 });
 
 test('buildView omits rolling rows and surfaces a degraded note', () => {
-  const view = buildView(
-    {
-      ...base,
-      spend: 5,
-      degraded: [
-        { figure: 'rolling', code: 'rolling_unavailable', message: 'Daily activity is unavailable for this key.' },
-      ],
-    },
-    new Date(base.asOf),
-    'UTC',
-  );
+  const view = buildView({
+    ...base,
+    spend: 5,
+    degraded: [
+      { figure: 'rolling', code: 'rolling_unavailable', message: 'Rolling spend is unavailable for this key.' },
+    ],
+  });
 
   expect(view.headline).toBe('$5.00 spent');
   expect(view.rolling).toEqual([]);
-  expect(view.degraded).toBe('Daily activity is unavailable for this key.');
+  expect(view.degraded).toBe('Rolling spend is unavailable for this key.');
 });

@@ -168,7 +168,7 @@ test('usage reads spend and buckets rolling windows', async () => {
   expect(activity).toContain('start_date=');
   expect(activity).toContain('end_date=2026-10-09');
   expect(activity).toContain('include_current_utc_day=true');
-  expect(activity).toContain('timezone=');
+  expect(activity).toContain('timezone=0');
   expect(fake.auth[activityIndex]).toBe('Bearer sk-test');
 });
 
@@ -209,14 +209,17 @@ test('a failed activity call degrades rolling without failing the read', async (
   expect(body.degraded?.[0]?.code).toBe('rolling_unavailable');
 });
 
-test('a key without a user_id skips rolling entirely', async () => {
+test('a key without a user_id degrades rolling without calling activity', async () => {
   const fake = await fakeLitellm({ info: { spend: 5 } });
   const h = await service(fake, { '/proj/opencode.json': opencodeConfig(fake.url) });
 
   const res = await fetch(`${h.url}/usage?provider=litellm&directory=/proj`, { headers: auth() });
   expect(res.status).toBe(200);
-  const body = (await res.json()) as { rolling?: unknown; degraded?: unknown };
+  const body = (await res.json()) as {
+    rolling?: unknown;
+    degraded?: Array<{ code: string }>;
+  };
   expect(body.rolling).toBeUndefined();
-  expect(body.degraded).toBeUndefined();
+  expect(body.degraded?.[0]?.code).toBe('rolling_unavailable');
   expect(fake.calls.some((call) => call.startsWith('/user/daily/activity'))).toBe(false);
 });

@@ -9,6 +9,7 @@ import { defaultProviderId, discoverProviders, type ConfigEnv, type Provider } f
 import {
   bucketRolling,
   localDate,
+  offsetMinutes,
   readDailyActivity,
   readKeyInfo,
   shiftDate,
@@ -41,7 +42,7 @@ export function createService(deps: ServiceDeps): RequestListener {
   return (request, response) => {
     void handle(deps, request)
       .then((answer) => send(response, answer))
-      .catch((cause: unknown) => send(response, error(500, 'upstream_error', String(cause))));
+      .catch((cause: unknown) => send(response, error(502, 'upstream_error', String(cause))));
   };
 }
 
@@ -90,25 +91,27 @@ async function usage(deps: ServiceDeps, url: URL): Promise<Answer> {
     spend: info.spend,
   };
 
-  if (info.userId) {
+  const rollingDegraded = {
+    figure: 'rolling',
+    code: 'rolling_unavailable',
+    message: 'Rolling spend is unavailable for this key.',
+  };
+
+  if (!info.userId) {
+    body.degraded = [rollingDegraded];
+  } else {
     const buckets = await readDailyActivity(
       deps.fetch,
       provider.host,
       provider.key,
       shiftDate(today, -29),
       today,
-      now.getTimezoneOffset(),
+      offsetMinutes(now, timeZone),
     );
     if (buckets) {
       body.rolling = bucketRolling(buckets, today);
     } else {
-      body.degraded = [
-        {
-          figure: 'rolling',
-          code: 'rolling_unavailable',
-          message: 'Daily activity is unavailable for this key.',
-        },
-      ];
+      body.degraded = [rollingDegraded];
     }
   }
 

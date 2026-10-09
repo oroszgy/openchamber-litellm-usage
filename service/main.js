@@ -205,6 +205,21 @@ async function readDailyActivity(fetchImpl, host, rawKey, startDate, endDate, ti
   }
   return buckets;
 }
+function offsetMinutes(date, timeZone) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hourCycle: "h23",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit"
+  }).formatToParts(date);
+  const part = (type) => Number(parts.find((entry) => entry.type === type)?.value ?? "0");
+  const wallClock = Date.UTC(part("year"), part("month") - 1, part("day"), part("hour"), part("minute"), part("second"));
+  return Math.round((date.getTime() - wallClock) / 60000);
+}
 function localDate(date, timeZone) {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone,
@@ -254,7 +269,7 @@ var MESSAGES = {
 };
 function createService(deps) {
   return (request, response) => {
-    handle(deps, request).then((answer) => send(response, answer)).catch((cause) => send(response, error(500, "upstream_error", String(cause))));
+    handle(deps, request).then((answer) => send(response, answer)).catch((cause) => send(response, error(502, "upstream_error", String(cause))));
   };
 }
 async function handle(deps, request) {
@@ -300,18 +315,19 @@ async function usage(deps, url) {
     asOf: now.toISOString(),
     spend: info.spend
   };
-  if (info.userId) {
-    const buckets = await readDailyActivity(deps.fetch, provider.host, provider.key, shiftDate(today, -29), today, now.getTimezoneOffset());
+  const rollingDegraded = {
+    figure: "rolling",
+    code: "rolling_unavailable",
+    message: "Rolling spend is unavailable for this key."
+  };
+  if (!info.userId) {
+    body.degraded = [rollingDegraded];
+  } else {
+    const buckets = await readDailyActivity(deps.fetch, provider.host, provider.key, shiftDate(today, -29), today, offsetMinutes(now, timeZone));
     if (buckets) {
       body.rolling = bucketRolling(buckets, today);
     } else {
-      body.degraded = [
-        {
-          figure: "rolling",
-          code: "rolling_unavailable",
-          message: "Daily activity is unavailable for this key."
-        }
-      ];
+      body.degraded = [rollingDegraded];
     }
   }
   return { status: 200, body };
