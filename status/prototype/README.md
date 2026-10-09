@@ -1,31 +1,26 @@
-# Layout prototype — throwaway
+# Multi-cap rows prototype — throwaway
 
-Not the extension. It answers [#7](https://github.com/oroszgy/openchamber-litellm-usage/issues/7):
-what should the LiteLLM Usage Work Status section look like inside its
-**24..320 px height** clamp, across states, and where should the provider
-selector live?
+Not the extension. It answers [#13](https://github.com/oroszgy/openchamber-litellm-usage/issues/13):
+with the key, member and team budgets all enforced at once, **what should the
+LiteLLM Usage section look like**, and what is the "tightest remaining" headline?
 
-The target look is the OpenChamber **Usage** panel (screenshot supplied
-2026-10-08): a provider row, then window rows of
-`label · reset-date · right-aligned value` (e.g. OpenCode Go's
-`Weekly  Mon, Oct 12, 02:00  28%`).
+Data mirrors a proposed `/usage` schema: a single **`headline`** (the
+least-remaining cap, or `unlimited`) plus **`caps[]`**, one entry per enforced
+budget:
 
-## The decision
-
-Variant **B (Native + expand)** is the chosen design:
-
-- one provider row (`LiteLLM`), a header **selector + refresh** (in-panel
-  fallback on hosts without `features.statusControls`);
-- one row per budget window: `<duration>  <reset date>  $spend / $cap`;
-- a `Credits balance` row: `$remaining left`;
-- rolling totals behind a `Rolling spend` expander (opening it grows the frame,
-  as the real guest would `setHeight`).
+```json
+{ "source": "key" | "member" | "team", "duration": "30d",
+  "cap": 50, "spend": 12.5, "remaining": 37.5,
+  "resetsAt": "…", "resetDerived": false,
+  "softBudget": { "limit": 35, "exceeded": false } }
+```
 
 ## Variants
 
-- **A — Native**: same rows, rolling inline (for comparison).
-- **B — Native + expand**: the decision (rolling behind the expander).
-- **C — Strip**: compact single-strip fallback for the 24 px floor.
+- **A — Ledger**: the native flat-row idiom, one row per enforced budget
+  (`Key balance · 30d · resets … · $12.50 / $50.00`), ordered key → member → team.
+- **B — Meters**: one spend/cap progress meter per cap, with the remaining left.
+- **C — Tight**: headline-first — the binding cap big, the others as compact pills.
 
 ## Run
 
@@ -37,30 +32,21 @@ bun run prototype:layout      # → http://localhost:5174/
 
 ## Controls
 
-- **Variant** — the floating bar at the bottom, `←` / `→`, or `?variant=A|B|C`.
+- **Variant** — floating bar (`←` / `→`) or `?variant=A|B|C`.
 - **Prototype panel (top-left)** — theme, frame height (24..320), panel width,
-  state (normal / exhausted / unbudgeted / degraded / loading / no provider /
-  fatal error), and the selector surface (header control vs in-panel select).
+  state (normal / key-only / member+team / exhausted / soft / unlimited /
+  degraded / loading / no provider / fatal error), and the selector surface.
 
 All axes are reflected in the URL, so any view is shareable.
 
 ## Height behaviour
 
-Rows are revealed by the frame's own height (CSS container queries), not by an
-interaction:
-
-| frame height | shown |
-| --- | --- |
-| ≤ 34 px | provider row + headline (`$37.50 left`) |
-| ~ 60 px | + the primary window row |
-| > 96 px | + the other window rows |
-| > 96 px | + `Credits balance` and the `Rolling spend` expander |
+Rows are revealed by the frame's own height via CSS container queries: ≤34 px
+keeps the provider row + headline; ~60 px adds the primary cap; taller reveals
+the other caps; the `Rolling spend` expander grows the frame.
 
 ## Notes
 
-- Data mirrors the normalised `/usage` schema from
-  [#5](https://github.com/oroszgy/openchamber-litellm-usage/issues/5); USD is two
-  decimals, four under `$1`, and reset dates use the native format
-  (`Thu, Nov 5, 14:50`, or time-only when the reset is today).
-- The dashed outline marks the frame's height clamp; turn it off to judge the
-  design. Prototype chrome (controls, switcher, outline) is not part of the design.
+- Throwaway. Variants and the switcher never merge; only the validated decision
+  lands in `main`.
+- Prototype chrome (controls, switcher, dashed clamp) is not part of the design.
