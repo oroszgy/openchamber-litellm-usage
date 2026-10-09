@@ -12,14 +12,47 @@
       #root {
         padding: 8px 10px;
         font: inherit;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
       }
-      .llu-line {
+      .llu-line,
+      .llu-provider,
+      .llu-headline,
+      .llu-hint,
+      .llu-error,
+      .llu-row {
         margin: 0;
+      }
+      .llu-provider {
+        font-weight: 600;
+      }
+      .llu-headline {
+        font-variant-numeric: tabular-nums;
       }
       .llu-hint {
-        margin: 0;
         opacity: 0.7;
         font-size: 0.85em;
+      }
+      .llu-error {
+        color: var(--oc-error-text, #d9534f);
+      }
+      .llu-rolling summary {
+        cursor: pointer;
+        opacity: 0.8;
+        font-size: 0.9em;
+      }
+      .llu-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        padding-left: 12px;
+        font-variant-numeric: tabular-nums;
+      }
+      .llu-retry {
+        align-self: flex-start;
+        margin-top: 4px;
+        cursor: pointer;
       }
     </style>
   </head>
