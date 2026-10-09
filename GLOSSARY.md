@@ -1,18 +1,19 @@
 # LiteLLM Usage
 
-The OpenChamber extension that shows one configured LiteLLM proxy key's budget,
-spend and reset window inside the chat's Work Status panel.
+The OpenChamber extension that shows the budgets applying to one configured
+LiteLLM virtual key — their spend and reset windows — inside the chat's Work
+Status panel.
 
 ## Language
 
 **Remaining budget**:
-The amount left in the key's current budget window, `max_budget − spend`. Never
-shown negative.
+The amount left in a budget: `max_budget − spend`, never shown negative. Every
+enforced budget has its own.
 _Avoid_: Credits, balance
 
 **Spend**:
-The amount spent within the key's current budget window. Resets when the budget
-window resets.
+The amount spent within a budget's current window. Resets when the budget window
+resets.
 _Avoid_: Usage, cost
 
 **Lifetime spend**:
@@ -23,6 +24,25 @@ _Avoid_: Total spend, total usage
 The period a budget resets over, given by its duration and ending at the next
 reset time.
 _Avoid_: Period, cycle
+
+**Key budget**:
+The budget set on the virtual key itself.
+_Avoid_: Key limit, personal budget
+
+**Member budget**:
+The budget set on a user's team membership, shared by every virtual key that user
+holds in the team.
+_Avoid_: User budget, personal budget
+
+**Team budget**:
+The budget set on the team.
+_Avoid_: Group budget
+
+**Enforced budget**:
+A budget that applies to the virtual key's requests. LiteLLM enforces every
+applicable key, member and team budget at once — any exhausted one blocks the
+request.
+_Avoid_: Active budget, applicable budget
 
 **Soft budget**:
 An advisory spending threshold that raises an alert but never blocks.
