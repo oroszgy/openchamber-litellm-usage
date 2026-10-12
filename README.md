@@ -84,8 +84,8 @@ is involved.
   the [budget design](https://github.com/oroszgy/openchamber-litellm-usage/issues/12).
 - **One proxy, chosen for you.** The candidate nearest `litellm` is used; a
   provider selector is not built yet.
-- **Read on demand.** The section reads when it is shown and expanded; it does
-  not poll in the background.
+- **Read on demand.** The section reads when it is shown and expanded, and
+  refreshes in place when the session changes; it does not poll on a timer.
 
 ## Development
 

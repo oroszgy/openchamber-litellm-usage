@@ -5,6 +5,11 @@
  *
  * Rolling spend is always shown; the key's spend figure sits behind a toggle
  * whose choice is remembered per server (`host.storage`).
+ *
+ * The host re-pushes `ready` when the session or theme changes, and the SDK
+ * replays it to `onReady` *and* `onDirectory`. A read already on screen is kept
+ * until the next one lands — a refresh never blanks the figures or resizes the
+ * frame — and a burst of pushes collapses into one request.
  */
 import type { HostClient } from '@openchamber/sdk';
 import { applyHostReady } from '@openchamber/sdk/ui';
@@ -24,12 +29,21 @@ export function start(host: GuestHost, root: HTMLElement): void {
   let showSpend = false;
   let current: UsageResponse | null = null;
   let started = false;
+  /**
+   * The directory whose outcome is painted on screen. A repeated `ready`
+   * replays the same directory, so this is what lets a refresh keep the
+   * figures instead of blanking them.
+   */
+  let paintedDirectory: string | null | undefined;
+  let inFlight = false;
+  let queued = false;
+  let lastHeight = 0;
 
   host.onReady((ctx) => {
     applyHostReady(ctx, document.documentElement);
     directory = ctx.directory;
     if (started) {
-      void load();
+      requestRefresh();
       return;
     }
     started = true;
@@ -37,13 +51,16 @@ export function start(host: GuestHost, root: HTMLElement): void {
   });
 
   host.onDirectory((next) => {
+    // A `ready` replays the directory too, and `onReady` has already set it;
+    // only a genuine project change gets past this.
+    if (next === directory) return;
     directory = next;
-    void load();
+    requestRefresh();
   });
 
   async function begin(): Promise<void> {
     await readPreference();
-    await load();
+    requestRefresh();
   }
 
   async function readPreference(): Promise<void> {
@@ -54,28 +71,61 @@ export function start(host: GuestHost, root: HTMLElement): void {
     }
   }
 
+  /**
+   * Re-read unless one is already running; queue a single follow-up so a burst
+   * of host pushes collapses into one extra request.
+   */
+  function requestRefresh(): void {
+    if (inFlight) {
+      queued = true;
+      return;
+    }
+    void load();
+  }
+
   async function load(): Promise<void> {
     const mine = (generation += 1);
-    showLoading();
+    const target = directory;
+    inFlight = true;
+    // Blank only when nothing current is on screen for this directory; a live
+    // refresh keeps the figures until the new ones arrive.
+    if (paintedDirectory !== target) showLoading();
     try {
-      const providers = JSON.parse((await request('/providers')).body) as ProvidersResponse;
+      const providers = JSON.parse((await request('/providers', undefined, target)).body) as ProvidersResponse;
       if (mine !== generation) return;
       if (!providers.default) {
         showNoProvider();
+        paintedDirectory = target;
         return;
       }
-      const usage = JSON.parse((await request('/usage', { provider: providers.default })).body) as UsageResponse;
+      const usage = JSON.parse(
+        (await request('/usage', { provider: providers.default }, target)).body,
+      ) as UsageResponse;
       if (mine !== generation) return;
       showUsage(usage);
+      paintedDirectory = target;
     } catch (cause) {
       if (mine !== generation) return;
+      // A failed refresh keeps the last figures; only an empty view shows it.
+      if (paintedDirectory === target) return;
       showError(cause);
+      paintedDirectory = target;
+    } finally {
+      inFlight = false;
+      if (queued) {
+        queued = false;
+        void load();
+      }
     }
   }
 
-  async function request(path: string, extra?: Record<string, string>): Promise<{ status: number; body: string }> {
+  async function request(
+    path: string,
+    extra: Record<string, string> | undefined,
+    forDirectory: string | null,
+  ): Promise<{ status: number; body: string }> {
     const query: Record<string, string> = { ...extra };
-    if (directory) query.directory = directory;
+    if (forDirectory) query.directory = forDirectory;
     const answer = await host.serviceRequest({
       method: 'GET',
       path,
@@ -134,13 +184,21 @@ export function start(host: GuestHost, root: HTMLElement): void {
   function showError(cause: unknown): void {
     root.replaceChildren(
       line('llu-error', cause instanceof Error ? cause.message : String(cause)),
-      actionButton('llu-retry', 'Retry', () => void load()),
+      actionButton('llu-retry', 'Retry', () => retry()),
     );
     setHeight(64);
   }
 
+  /** Retry is a fresh start: blank to the loading line so it reads as work. */
+  function retry(): void {
+    paintedDirectory = undefined;
+    requestRefresh();
+  }
+
   function setHeight(desired: number): void {
     const height = Math.min(320, Math.max(24, desired));
+    if (height === lastHeight) return;
+    lastHeight = height;
     void host.setHeight(height).catch(() => {
       // A host that refuses the height keeps its default; not a failure.
     });

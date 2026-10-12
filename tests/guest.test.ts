@@ -23,24 +23,55 @@ const usage = {
   rolling: { day: 1.2, week: 8.4, month: 21 },
 };
 
+type HostStub = {
+  host: GuestHost;
+  heights: number[];
+  requests: string[];
+  stored: Array<[string, unknown]>;
+  /** Push `ready`, the way the host does on a session or theme change. */
+  emitReady: (context?: HostReadyContext) => void;
+  /** Push a `directory` change. */
+  emitDirectory: (directory: string | null) => void;
+};
+
 function hostStub(answers: {
   providers: unknown;
   usage?: unknown;
   stored?: unknown;
-}): { host: GuestHost; heights: number[]; requests: string[]; stored: Array<[string, unknown]> } {
+  /** Status for `/usage`; non-200 stands in for a failing proxy. */
+  usageStatus?: () => number;
+}): HostStub {
   const heights: number[] = [];
   const requests: string[] = [];
   const stored: Array<[string, unknown]> = [];
+  const readyListeners = new Set<(context: HostReadyContext) => void>();
+  const directoryListeners = new Set<(directory: string | null) => void>();
+  let lastReady: HostReadyContext | undefined;
+
   const host = {
     onReady: (listener: (context: HostReadyContext) => void) => {
-      listener(readyContext);
-      return () => {};
+      readyListeners.add(listener);
+      if (lastReady) listener(lastReady);
+      return () => readyListeners.delete(listener);
     },
-    onDirectory: () => () => {},
+    onDirectory: (listener: (directory: string | null) => void) => {
+      directoryListeners.add(listener);
+      if (lastReady) listener(lastReady.directory);
+      return () => directoryListeners.delete(listener);
+    },
     serviceRequest: async (request: { path: string; query?: Record<string, string> }) => {
       requests.push(`${request.path}?${new URLSearchParams(request.query ?? {}).toString()}`);
       if (request.path === '/providers') return { status: 200, body: JSON.stringify(answers.providers) };
-      if (request.path === '/usage') return { status: 200, body: JSON.stringify(answers.usage) };
+      if (request.path === '/usage') {
+        const status = answers.usageStatus?.() ?? 200;
+        if (status >= 400) {
+          return {
+            status,
+            body: JSON.stringify({ error: { code: 'upstream_error', message: 'The LiteLLM proxy could not be reached.' } }),
+          };
+        }
+        return { status, body: JSON.stringify(answers.usage) };
+      }
       return { status: 404, body: '{}' };
     },
     setHeight: async (height: number) => {
@@ -55,7 +86,22 @@ function hostStub(answers: {
       keys: async () => [],
     },
   } as unknown as GuestHost;
-  return { host, heights, requests, stored };
+
+  // One `ready` replays to `onReady` *and* `onDirectory`, as the SDK does.
+  const emitReady = (context: HostReadyContext = readyContext): void => {
+    lastReady = context;
+    for (const listener of readyListeners) listener(context);
+    for (const listener of directoryListeners) listener(context.directory);
+  };
+  const emitDirectory = (directory: string | null): void => {
+    if (lastReady) lastReady = { ...lastReady, directory };
+    for (const listener of directoryListeners) listener(directory);
+  };
+
+  // Push the first ready once `start` has registered both listeners.
+  queueMicrotask(() => emitReady());
+
+  return { host, heights, requests, stored, emitReady, emitDirectory };
 }
 
 test('shows rolling spend at all times and hides the spend figure by default', async () => {
@@ -70,6 +116,73 @@ test('shows rolling spend at all times and hides the spend figure by default', a
   expect(root.querySelector('.llu-toggle')?.textContent).toBe('Show spend');
   expect(requests[0]).toBe('/providers?directory=%2Fproj');
   expect(heights.length).toBeGreaterThan(0);
+});
+
+test('a single ready loads the section once, though it reaches both listeners', async () => {
+  const { host, requests } = hostStub({ providers, usage });
+  const root = document.createElement('div');
+
+  start(host, root);
+  await settle();
+
+  expect(requests.filter((path) => path.startsWith('/providers'))).toHaveLength(1);
+});
+
+test('a repeated ready refreshes in place without blanking the figures', async () => {
+  const { host, heights, requests, emitReady } = hostStub({ providers, usage });
+  const root = document.createElement('div');
+
+  start(host, root);
+  await settle();
+  const painted = [...root.querySelectorAll('.llu-row')].map((row) => row.textContent);
+  expect(painted).toHaveLength(3);
+  const heightsAfterFirstPaint = heights.length;
+  const providerCalls = requests.filter((path) => path.startsWith('/providers')).length;
+
+  emitReady();
+
+  // Synchronously: the figures are still on screen, no loading line.
+  expect([...root.querySelectorAll('.llu-row')]).toHaveLength(3);
+  expect(root.textContent).not.toContain('Loading');
+
+  await settle();
+
+  expect([...root.querySelectorAll('.llu-row')].map((row) => row.textContent)).toEqual(painted);
+  expect(requests.filter((path) => path.startsWith('/providers'))).toHaveLength(providerCalls + 1);
+  expect(heights).toHaveLength(heightsAfterFirstPaint);
+});
+
+test('a failed refresh keeps the last figures on screen', async () => {
+  let failing = false;
+  const { host, emitReady } = hostStub({ providers, usage, usageStatus: () => (failing ? 502 : 200) });
+  const root = document.createElement('div');
+
+  start(host, root);
+  await settle();
+  const painted = [...root.querySelectorAll('.llu-row')].map((row) => row.textContent);
+
+  failing = true;
+  emitReady();
+  await settle();
+
+  expect([...root.querySelectorAll('.llu-row')].map((row) => row.textContent)).toEqual(painted);
+  expect(root.querySelector('.llu-error')).toBeNull();
+});
+
+test('a project change reloads for the new directory', async () => {
+  const { host, requests, emitDirectory } = hostStub({ providers, usage });
+  const root = document.createElement('div');
+
+  start(host, root);
+  await settle();
+
+  emitDirectory('/other');
+  await settle();
+
+  const providerCalls = requests.filter((path) => path.startsWith('/providers'));
+  expect(providerCalls.at(-1)).toBe('/providers?directory=%2Fother');
+  expect(requests.at(-1)).toBe('/usage?provider=litellm&directory=%2Fother');
+  expect([...root.querySelectorAll('.llu-row')]).toHaveLength(3);
 });
 
 test('reveals the spend figure when toggled and remembers it', async () => {
