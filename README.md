@@ -5,7 +5,10 @@ An [OpenChamber](https://openchamber.dev) extension that shows your self-hosted
 Status** panel — the same panel that lists Context, Project, Usage, Turn stats,
 MCP and other sections. One section, no rail panel, no toolbar icon.
 
-![The LiteLLM Usage section in Work Status: rolling spend for today, the last 7 days and the last 30 days, with the lifetime spend revealed and the Show/Hide toggle.](docs/images/litellm-section.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/work-status-dark.png">
+  <img src="docs/images/work-status-light.png" alt="The OpenChamber Work Status panel with the LiteLLM Usage section, showing rolling spend for today, the last 7 days and the last 30 days and the lifetime spend." width="340">
+</picture>
 
 ## Features
 
