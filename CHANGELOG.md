@@ -6,6 +6,16 @@ version follows [Semantic Versioning](https://semver.org/) — minor for a featu
 patch for a fix. The bump and the entry land in the same commit as the change; see
 the Versioning section of `AGENTS.md`.
 
+## 0.2.1 — 2026-10-12
+
+### Fixed
+
+- Stop the figures flickering while a session is active. The section now
+  refreshes **in place** when the host reports a session or theme change — the
+  current figures stay until the new ones arrive, a burst of host pushes
+  collapses into a single request, and a failed refresh keeps the last figures
+  rather than replacing them with an error.
+
 ## 0.2.0 — 2026-10-12
 
 First public release.
