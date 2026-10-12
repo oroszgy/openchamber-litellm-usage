@@ -1,6 +1,6 @@
 {
   "name": "litellm-usage",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "OpenChamber Work Status section showing LiteLLM proxy usage and credits balance.",
   "license": "MIT",

@@ -17,8 +17,7 @@ test('formatUsd uses two decimals, four under a dollar', () => {
 test('buildView formats spend and the rolling rows', () => {
   const view = buildView({ ...base, rolling: { day: 1.2, week: 8.4, month: 21 } });
 
-  expect(view.provider).toBe('LiteLLM');
-  expect(view.headline).toBe('$1,536.61 spent');
+  expect(view.total).toBe('$1,536.61');
   expect(view.rolling).toEqual([
     { label: 'Today', value: '$1.20' },
     { label: 'Last 7 days', value: '$8.40' },
@@ -36,7 +35,7 @@ test('buildView omits rolling rows and surfaces a degraded note', () => {
     ],
   });
 
-  expect(view.headline).toBe('$5.00 spent');
+  expect(view.total).toBe('$5.00');
   expect(view.rolling).toEqual([]);
   expect(view.degraded).toBe('Rolling spend is unavailable for this key.');
 });

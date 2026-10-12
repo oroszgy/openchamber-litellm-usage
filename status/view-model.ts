@@ -15,8 +15,7 @@ export type Usage = {
 export type ViewRow = { label: string; value: string };
 
 export type View = {
-  provider: string;
-  headline: string;
+  total: string;
   rolling: ViewRow[];
   degraded: string | null;
 };
@@ -32,8 +31,7 @@ export function formatUsd(value: number): string {
 
 export function buildView(usage: Usage): View {
   return {
-    provider: usage.provider.name,
-    headline: `${formatUsd(usage.spend)} spent`,
+    total: formatUsd(usage.spend),
     rolling: usage.rolling
       ? [
           { label: 'Today', value: formatUsd(usage.rolling.day) },

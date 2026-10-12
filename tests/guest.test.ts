@@ -10,12 +10,26 @@ const readyContext = {
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
+const providers = {
+  providers: [{ id: 'litellm', name: 'LiteLLM', host: 'https://x' }],
+  default: 'litellm',
+};
+
+const usage = {
+  provider: { id: 'litellm', name: 'LiteLLM', host: 'https://x' },
+  asOf: '2026-10-09T12:00:00.000Z',
+  spend: 1536.61,
+  rolling: { day: 1.2, week: 8.4, month: 21 },
+};
+
 function hostStub(answers: {
   providers: unknown;
   usage?: unknown;
-}): { host: GuestHost; heights: number[]; requests: string[] } {
+  stored?: unknown;
+}): { host: GuestHost; heights: number[]; requests: string[]; stored: Array<[string, unknown]> } {
   const heights: number[] = [];
   const requests: string[] = [];
+  const stored: Array<[string, unknown]> = [];
   const host = {
     onReady: (listener: (context: HostReadyContext) => void) => {
       listener(readyContext);
@@ -31,18 +45,71 @@ function hostStub(answers: {
     setHeight: async (height: number) => {
       heights.push(height);
     },
+    storage: {
+      get: async () => answers.stored,
+      set: async (key: string, value: unknown) => {
+        stored.push([key, value]);
+      },
+      delete: async () => {},
+      keys: async () => [],
+    },
   } as unknown as GuestHost;
-  return { host, heights, requests };
+  return { host, heights, requests, stored };
 }
 
-test('renders the provider, spend and rolling rows from the service', async () => {
-  const { host, heights, requests } = hostStub({
-    providers: { providers: [{ id: 'litellm', name: 'LiteLLM', host: 'https://x' }], default: 'litellm' },
+test('shows rolling spend at all times and hides the total by default', async () => {
+  const { host, heights, requests } = hostStub({ providers, usage });
+  const root = document.createElement('div');
+
+  start(host, root);
+  await settle();
+
+  const rows = [...root.querySelectorAll('.llu-row')].map((row) => row.textContent);
+  expect(rows).toEqual(['Today$1.20', 'Last 7 days$8.40', 'Last 30 days$21.00']);
+  expect(root.querySelector('.llu-toggle')?.textContent).toBe('Show total spend');
+  expect(requests[0]).toBe('/providers?directory=%2Fproj');
+  expect(heights.length).toBeGreaterThan(0);
+});
+
+test('reveals the total spend when toggled and remembers it', async () => {
+  const { host, stored } = hostStub({ providers, usage });
+  const root = document.createElement('div');
+
+  start(host, root);
+  await settle();
+  expect(root.textContent).not.toContain('Total spent');
+
+  (root.querySelector('.llu-toggle') as HTMLButtonElement).click();
+  await settle();
+
+  const rows = [...root.querySelectorAll('.llu-row')].map((row) => row.textContent);
+  expect(rows.at(-1)).toBe('Total spent$1,536.61');
+  expect(root.querySelector('.llu-toggle')?.textContent).toBe('Hide total spend');
+  expect(stored).toEqual([['litellm-usage:show-total-spend', true]]);
+});
+
+test('honours a stored preference to show the total spend', async () => {
+  const { host } = hostStub({ providers, usage, stored: true });
+  const root = document.createElement('div');
+
+  start(host, root);
+  await settle();
+
+  const rows = [...root.querySelectorAll('.llu-row')].map((row) => row.textContent);
+  expect(rows.at(-1)).toBe('Total spent$1,536.61');
+  expect(root.querySelector('.llu-toggle')?.textContent).toBe('Hide total spend');
+});
+
+test('shows the degraded note when rolling spend is unavailable', async () => {
+  const { host } = hostStub({
+    providers,
     usage: {
       provider: { id: 'litellm', name: 'LiteLLM', host: 'https://x' },
       asOf: '2026-10-09T12:00:00.000Z',
-      spend: 1536.61,
-      rolling: { day: 1.2, week: 8.4, month: 21 },
+      spend: 5,
+      degraded: [
+        { figure: 'rolling', code: 'rolling_unavailable', message: 'Rolling spend is unavailable for this key.' },
+      ],
     },
   });
   const root = document.createElement('div');
@@ -50,12 +117,9 @@ test('renders the provider, spend and rolling rows from the service', async () =
   start(host, root);
   await settle();
 
-  expect(root.querySelector('.llu-provider')?.textContent).toBe('LiteLLM');
-  expect(root.querySelector('.llu-headline')?.textContent).toBe('$1,536.61 spent');
-  const rows = [...root.querySelectorAll('.llu-row')].map((row) => row.textContent);
-  expect(rows).toEqual(['Today$1.20', 'Last 7 days$8.40', 'Last 30 days$21.00']);
-  expect(requests[0]).toBe('/providers?directory=%2Fproj');
-  expect(heights.length).toBeGreaterThan(0);
+  expect(root.querySelectorAll('.llu-row').length).toBe(0);
+  expect(root.textContent).toContain('Rolling spend is unavailable for this key.');
+  expect(root.querySelector('.llu-toggle')).not.toBeNull();
 });
 
 test('renders the no-provider hint', async () => {
@@ -81,6 +145,12 @@ test('renders a service error with a retry', async () => {
       body: JSON.stringify({ error: { code: 'unauthorized', message: 'The LiteLLM key was rejected.' } }),
     }),
     setHeight: async () => {},
+    storage: {
+      get: async () => undefined,
+      set: async () => {},
+      delete: async () => {},
+      keys: async () => [],
+    },
   } as unknown as GuestHost;
 
   start(host, root);
