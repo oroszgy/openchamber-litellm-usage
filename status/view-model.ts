@@ -1,21 +1,14 @@
 /**
  * The pure view-model: normalise a `/usage` body into the strings the section
- * shows. No DOM, no ambient clock — `now` and the time zone are parameters so
- * the formatting is testable.
+ * shows. No DOM, no ambient clock.
  */
-
-export type Usage = {
-  provider: { id: string; name: string; host: string };
-  asOf: string;
-  spend: number;
-  rolling?: { day: number; week: number; month: number };
-  degraded?: Array<{ figure: string; code: string; message: string }>;
-};
+import type { UsageResponse } from '../shared/wire.ts';
 
 export type ViewRow = { label: string; value: string };
 
 export type View = {
-  total: string;
+  spendLabel: string;
+  spendValue: string;
   rolling: ViewRow[];
   degraded: string | null;
 };
@@ -29,9 +22,10 @@ export function formatUsd(value: number): string {
   })}`;
 }
 
-export function buildView(usage: Usage): View {
+export function buildView(usage: UsageResponse): View {
   return {
-    total: formatUsd(usage.spend),
+    spendLabel: usage.spendKind === 'lifetime' ? 'Lifetime spend' : 'Spend',
+    spendValue: formatUsd(usage.spend),
     rolling: usage.rolling
       ? [
           { label: 'Today', value: formatUsd(usage.rolling.day) },

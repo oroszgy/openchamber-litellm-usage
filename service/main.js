@@ -48,6 +48,14 @@ function stripJsonc(text) {
 }
 
 // service/config.ts
+class ConfigReadError extends Error {
+  path;
+  constructor(path) {
+    super(`The OpenCode config at ${path} is unreadable.`);
+    this.path = path;
+    this.name = "ConfigReadError";
+  }
+}
 function managementRoot(baseURL) {
   const trimmed = baseURL.replace(/\/+$/, "");
   return trimmed.endsWith("/v1") ? trimmed.slice(0, -3) : trimmed;
@@ -105,7 +113,7 @@ async function readFirst(paths, readText) {
     try {
       return parseJsonc(text);
     } catch {
-      return {};
+      throw new ConfigReadError(path);
     }
   }
   return {};
@@ -142,69 +150,7 @@ function editDistance(a, b) {
   return grid[a.length]?.[b.length] ?? 0;
 }
 
-// service/litellm.ts
-import { createHash } from "node:crypto";
-async function readKeyInfo(fetchImpl, host, key) {
-  let response;
-  try {
-    response = await fetchImpl(`${host}/key/info`, { headers: { authorization: `Bearer ${key}` } });
-  } catch {
-    return { ok: false, code: "provider_unreachable" };
-  }
-  if (response.status === 401 || response.status === 403)
-    return { ok: false, code: "unauthorized" };
-  if (response.status === 404)
-    return { ok: false, code: "unsupported_proxy" };
-  if (!response.ok)
-    return { ok: false, code: "upstream_error" };
-  let body;
-  try {
-    body = await response.json();
-  } catch {
-    return { ok: false, code: "unsupported_proxy" };
-  }
-  const info = body?.info;
-  if (!info || typeof info.spend !== "number")
-    return { ok: false, code: "unsupported_proxy" };
-  const userId = typeof info.user_id === "string" ? info.user_id : undefined;
-  return { ok: true, spend: info.spend, userId };
-}
-async function readDailyActivity(fetchImpl, host, rawKey, startDate, endDate, timezoneOffsetMinutes) {
-  const query = new URLSearchParams({
-    api_key: createHash("sha256").update(rawKey).digest("hex"),
-    start_date: startDate,
-    end_date: endDate,
-    include_current_utc_day: "true",
-    timezone: String(timezoneOffsetMinutes)
-  });
-  let response;
-  try {
-    response = await fetchImpl(`${host}/user/daily/activity?${query.toString()}`, {
-      headers: { authorization: `Bearer ${rawKey}` }
-    });
-  } catch {
-    return null;
-  }
-  if (!response.ok)
-    return null;
-  let body;
-  try {
-    body = await response.json();
-  } catch {
-    return null;
-  }
-  const results = body?.results;
-  if (!Array.isArray(results))
-    return null;
-  const buckets = [];
-  for (const result of results) {
-    const date = result.date;
-    const spend = result.metrics?.spend;
-    if (typeof date === "string" && typeof spend === "number")
-      buckets.push({ date, spend });
-  }
-  return buckets;
-}
+// service/dates.ts
 function offsetMinutes(date, timeZone) {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone,
@@ -256,6 +202,74 @@ function round(value) {
   return Math.round(value * 1e6) / 1e6;
 }
 
+// service/litellm.ts
+import { createHash } from "node:crypto";
+async function readKeyInfo(fetchImpl, target) {
+  let response;
+  try {
+    response = await fetchImpl(`${target.host}/key/info`, {
+      headers: { authorization: `Bearer ${target.key}` }
+    });
+  } catch {
+    return { ok: false, code: "provider_unreachable" };
+  }
+  if (response.status === 401 || response.status === 403)
+    return { ok: false, code: "unauthorized" };
+  if (response.status === 404)
+    return { ok: false, code: "unsupported_proxy" };
+  if (!response.ok)
+    return { ok: false, code: "upstream_error" };
+  let body;
+  try {
+    body = await response.json();
+  } catch {
+    return { ok: false, code: "unsupported_proxy" };
+  }
+  const info = body?.info;
+  if (!info || typeof info.spend !== "number")
+    return { ok: false, code: "unsupported_proxy" };
+  const userId = typeof info.user_id === "string" ? info.user_id : undefined;
+  const budgetDuration = info.budget_duration;
+  const windowed = typeof budgetDuration === "string" && budgetDuration.length > 0;
+  return { ok: true, spend: info.spend, spendKind: windowed ? "window" : "lifetime", userId };
+}
+async function readDailyActivity(fetchImpl, target, startDate, endDate, timezoneOffsetMinutes) {
+  const query = new URLSearchParams({
+    api_key: createHash("sha256").update(target.key).digest("hex"),
+    start_date: startDate,
+    end_date: endDate,
+    include_current_utc_day: "true",
+    timezone: String(timezoneOffsetMinutes)
+  });
+  let response;
+  try {
+    response = await fetchImpl(`${target.host}/user/daily/activity?${query.toString()}`, {
+      headers: { authorization: `Bearer ${target.key}` }
+    });
+  } catch {
+    return null;
+  }
+  if (!response.ok)
+    return null;
+  let body;
+  try {
+    body = await response.json();
+  } catch {
+    return null;
+  }
+  const results = body?.results;
+  if (!Array.isArray(results))
+    return null;
+  const buckets = [];
+  for (const result of results) {
+    const date = result.date;
+    const spend = result.metrics?.spend;
+    if (typeof date === "string" && typeof spend === "number")
+      buckets.push({ date, spend });
+  }
+  return buckets;
+}
+
 // service/app.ts
 var error = (status, code, message) => ({
   status,
@@ -269,7 +283,10 @@ var MESSAGES = {
 };
 function createService(deps) {
   return (request, response) => {
-    handle(deps, request).then((answer) => send(response, answer)).catch((cause) => send(response, error(502, "upstream_error", String(cause))));
+    handle(deps, request).then((answer) => send(response, answer)).catch((cause) => {
+      console.error("[litellm-usage] unhandled service error:", cause);
+      send(response, error(502, "upstream_error", "The service could not complete the request."));
+    });
   };
 }
 async function handle(deps, request) {
@@ -279,23 +296,28 @@ async function handle(deps, request) {
   const url = new URL(request.url ?? "/", "http://localhost");
   if (request.method !== "GET")
     return error(404, "not_found", "Not found.");
-  if (url.pathname === "/health")
-    return { status: 200, body: { ok: true } };
-  if (url.pathname === "/providers")
-    return listProviders(deps, url.searchParams.get("directory"));
-  if (url.pathname === "/usage")
-    return usage(deps, url);
+  try {
+    if (url.pathname === "/health")
+      return { status: 200, body: { ok: true } };
+    if (url.pathname === "/providers")
+      return await listProviders(deps, url.searchParams.get("directory"));
+    if (url.pathname === "/usage")
+      return await usage(deps, url);
+  } catch (cause) {
+    if (cause instanceof ConfigReadError) {
+      return error(500, "config_read_error", "The OpenCode configuration could not be read.");
+    }
+    throw cause;
+  }
   return error(404, "not_found", "Not found.");
 }
 async function listProviders(deps, directory) {
   const providers = await discoverProviders(directory, deps);
-  return {
-    status: 200,
-    body: {
-      providers: providers.map(({ id, name, host }) => ({ id, name, host })),
-      default: defaultProviderId(providers.map((provider) => provider.id))
-    }
+  const body = {
+    providers: providers.map(publicProvider),
+    default: defaultProviderId(providers.map((provider) => provider.id))
   };
+  return { status: 200, body };
 }
 async function usage(deps, url) {
   const directory = url.searchParams.get("directory");
@@ -304,7 +326,8 @@ async function usage(deps, url) {
   const provider = providers.find((candidate) => candidate.id === requested);
   if (!provider)
     return error(404, "no_provider", `No LiteLLM provider matching '${requested ?? ""}'.`);
-  const info = await readKeyInfo(deps.fetch, provider.host, provider.key);
+  const target = { host: provider.host, key: provider.key };
+  const info = await readKeyInfo(deps.fetch, target);
   if (!info.ok)
     return error(502, info.code, MESSAGES[info.code]);
   const now = deps.now();
@@ -313,7 +336,8 @@ async function usage(deps, url) {
   const body = {
     provider: publicProvider(provider),
     asOf: now.toISOString(),
-    spend: info.spend
+    spend: info.spend,
+    spendKind: info.spendKind
   };
   const rollingDegraded = {
     figure: "rolling",
@@ -323,7 +347,7 @@ async function usage(deps, url) {
   if (!info.userId) {
     body.degraded = [rollingDegraded];
   } else {
-    const buckets = await readDailyActivity(deps.fetch, provider.host, provider.key, shiftDate(today, -29), today, offsetMinutes(now, timeZone));
+    const buckets = await readDailyActivity(deps.fetch, target, shiftDate(today, -29), today, offsetMinutes(now, timeZone));
     if (buckets) {
       body.rolling = bucketRolling(buckets, today);
     } else {

@@ -2,25 +2,30 @@
  * The LiteLLM calls and their normalisation: the key's own spend from
  * `GET /key/info`, and the user's daily buckets from `GET /user/daily/activity`
  * for rolling day/week/month spend. Raw LiteLLM JSON never leaves this module.
+ *
+ * Both calls read the same `Target` — the proxy the section is pointed at — and
+ * `readDailyActivity` also needs the windows the caller has already placed on
+ * the local calendar (`service/dates.ts`).
  */
 import { createHash } from 'node:crypto';
+import type { DailyBucket } from './dates.ts';
+import type { SpendKind } from '../shared/wire.ts';
 
 export type KeyInfoFailure = 'unauthorized' | 'unsupported_proxy' | 'provider_unreachable' | 'upstream_error';
+
+/** A LiteLLM proxy and the virtual key to read it with. */
+export type Target = { host: string; key: string };
+
 export type KeyInfo =
-  | { ok: true; spend: number; userId?: string | undefined }
+  | { ok: true; spend: number; spendKind: SpendKind; userId?: string | undefined }
   | { ok: false; code: KeyInfoFailure };
 
-export type DailyBucket = { date: string; spend: number };
-export type Rolling = { day: number; week: number; month: number };
-
-export async function readKeyInfo(
-  fetchImpl: typeof fetch,
-  host: string,
-  key: string,
-): Promise<KeyInfo> {
+export async function readKeyInfo(fetchImpl: typeof fetch, target: Target): Promise<KeyInfo> {
   let response: Response;
   try {
-    response = await fetchImpl(`${host}/key/info`, { headers: { authorization: `Bearer ${key}` } });
+    response = await fetchImpl(`${target.host}/key/info`, {
+      headers: { authorization: `Bearer ${target.key}` },
+    });
   } catch {
     return { ok: false, code: 'provider_unreachable' };
   }
@@ -40,20 +45,21 @@ export async function readKeyInfo(
   if (!info || typeof info.spend !== 'number') return { ok: false, code: 'unsupported_proxy' };
 
   const userId = typeof info.user_id === 'string' ? info.user_id : undefined;
-  return { ok: true, spend: info.spend, userId };
+  const budgetDuration = info.budget_duration;
+  const windowed = typeof budgetDuration === 'string' && budgetDuration.length > 0;
+  return { ok: true, spend: info.spend, spendKind: windowed ? 'window' : 'lifetime', userId };
 }
 
 /** Returns the daily buckets, or `null` when the activity call can't be used. */
 export async function readDailyActivity(
   fetchImpl: typeof fetch,
-  host: string,
-  rawKey: string,
+  target: Target,
   startDate: string,
   endDate: string,
   timezoneOffsetMinutes: number,
 ): Promise<DailyBucket[] | null> {
   const query = new URLSearchParams({
-    api_key: createHash('sha256').update(rawKey).digest('hex'),
+    api_key: createHash('sha256').update(target.key).digest('hex'),
     start_date: startDate,
     end_date: endDate,
     include_current_utc_day: 'true',
@@ -62,8 +68,8 @@ export async function readDailyActivity(
 
   let response: Response;
   try {
-    response = await fetchImpl(`${host}/user/daily/activity?${query.toString()}`, {
-      headers: { authorization: `Bearer ${rawKey}` },
+    response = await fetchImpl(`${target.host}/user/daily/activity?${query.toString()}`, {
+      headers: { authorization: `Bearer ${target.key}` },
     });
   } catch {
     return null;
@@ -87,67 +93,4 @@ export async function readDailyActivity(
     if (typeof date === 'string' && typeof spend === 'number') buckets.push({ date, spend });
   }
   return buckets;
-}
-
-/** The host's UTC offset in minutes at `date`, `getTimezoneOffset()` convention. */
-export function offsetMinutes(date: Date, timeZone: string): number {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    hourCycle: 'h23',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  }).formatToParts(date);
-  const part = (type: string): number => Number(parts.find((entry) => entry.type === type)?.value ?? '0');
-  const wallClock = Date.UTC(
-    part('year'),
-    part('month') - 1,
-    part('day'),
-    part('hour'),
-    part('minute'),
-    part('second'),
-  );
-  return Math.round((date.getTime() - wallClock) / 60000);
-}
-
-/** The local calendar date (`YYYY-MM-DD`) of `date` in `timeZone`. */
-export function localDate(date: Date, timeZone: string): string {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(date);
-  const value = (type: string): string => parts.find((part) => part.type === type)?.value ?? '01';
-  return `${value('year')}-${value('month')}-${value('day')}`;
-}
-
-/** `YYYY-MM-DD` shifted by whole days. */
-export function shiftDate(date: string, days: number): string {
-  const [year, month, day] = date.split('-').map(Number);
-  const shifted = new Date(Date.UTC(year ?? 1970, (month ?? 1) - 1, day ?? 1));
-  shifted.setUTCDate(shifted.getUTCDate() + days);
-  return shifted.toISOString().slice(0, 10);
-}
-
-/** Sum the buckets into today, the last 7 days (incl. today) and the last 30. */
-export function bucketRolling(buckets: DailyBucket[], today: string): Rolling {
-  const weekStart = shiftDate(today, -6);
-  const monthStart = shiftDate(today, -29);
-  let day = 0;
-  let week = 0;
-  let month = 0;
-  for (const bucket of buckets) {
-    if (bucket.date === today) day += bucket.spend;
-    if (bucket.date >= weekStart && bucket.date <= today) week += bucket.spend;
-    if (bucket.date >= monthStart && bucket.date <= today) month += bucket.spend;
-  }
-  return { day: round(day), week: round(week), month: round(month) };
-}
-
-function round(value: number): number {
-  return Math.round(value * 1e6) / 1e6;
 }

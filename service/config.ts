@@ -10,6 +10,14 @@ import { parseJsonc } from './jsonc.ts';
 
 export type Provider = { id: string; name: string; host: string; key: string };
 
+/** An OpenCode config file exists but cannot be read: a fatal, explicit state. */
+export class ConfigReadError extends Error {
+  constructor(readonly path: string) {
+    super(`The OpenCode config at ${path} is unreadable.`);
+    this.name = 'ConfigReadError';
+  }
+}
+
 export type ConfigEnv = {
   home: string;
   xdgConfigHome?: string | undefined;
@@ -89,7 +97,8 @@ async function readFirst(
     try {
       return parseJsonc(text) as RawConfig;
     } catch {
-      return {};
+      // Present but unparseable: never mistake it for "no providers configured".
+      throw new ConfigReadError(path);
     }
   }
   return {};

@@ -36,7 +36,7 @@ async function fakeLitellm(seed?: {
 }): Promise<Fake> {
   const calls: string[] = [];
   const auth: Array<string | undefined> = [];
-  let info = seed?.info ?? { spend: 1536.61, user_id: 'u1', team_id: 't1' };
+  let info = seed?.info ?? { spend: 1536.61, user_id: 'u1' };
   let activity = seed?.activity ?? { results: [] };
   let activityStatus = seed?.activityStatus ?? 200;
 
@@ -132,7 +132,7 @@ test('providers lists candidates by management root and never leaks the key', as
 
 test('usage reads spend and buckets rolling windows', async () => {
   const fake = await fakeLitellm({
-    info: { spend: 1536.61, user_id: 'u1', team_id: 't1' },
+    info: { spend: 1536.61, user_id: 'u1' },
     activity: {
       results: [
         { date: '2026-10-09', metrics: { spend: 1.2 } },
@@ -151,12 +151,14 @@ test('usage reads spend and buckets rolling windows', async () => {
     provider: unknown;
     asOf: string;
     spend: number;
+    spendKind: string;
     rolling: { day: number; week: number; month: number };
   };
 
   expect(body.provider).toEqual({ id: 'litellm', name: 'LiteLLM', host: fake.url });
   expect(body.asOf).toBe('2026-10-09T12:00:00.000Z');
   expect(body.spend).toBe(1536.61);
+  expect(body.spendKind).toBe('lifetime');
   expect(body.rolling.day).toBeCloseTo(1.2);
   expect(body.rolling.week).toBeCloseTo(2.7);
   expect(body.rolling.month).toBeCloseTo(5.7);
@@ -222,4 +224,41 @@ test('a key without a user_id degrades rolling without calling activity', async 
   expect(body.rolling).toBeUndefined();
   expect(body.degraded?.[0]?.code).toBe('rolling_unavailable');
   expect(fake.calls.some((call) => call.startsWith('/user/daily/activity'))).toBe(false);
+});
+
+test('a key with a budget_duration reports a windowed spend', async () => {
+  const fake = await fakeLitellm({ info: { spend: 12.5, user_id: 'u1', budget_duration: '30d' } });
+  const h = await service(fake, { '/proj/opencode.json': opencodeConfig(fake.url) });
+
+  const res = await fetch(`${h.url}/usage?provider=litellm&directory=/proj`, { headers: auth() });
+  expect(res.status).toBe(200);
+  const body = (await res.json()) as { spend: number; spendKind: string };
+  expect(body.spend).toBe(12.5);
+  expect(body.spendKind).toBe('window');
+});
+
+test('an unreadable config is a fatal config_read_error, not "no provider"', async () => {
+  const fake = await fakeLitellm();
+  const h = await service(fake, { '/proj/opencode.json': '{ this is not json' });
+
+  const providers = await fetch(`${h.url}/providers?directory=/proj`, { headers: auth() });
+  expect(providers.status).toBe(500);
+  expect(((await providers.json()) as { error: { code: string } }).error.code).toBe('config_read_error');
+
+  const usage = await fetch(`${h.url}/usage?provider=litellm&directory=/proj`, { headers: auth() });
+  expect(usage.status).toBe(500);
+  expect(((await usage.json()) as { error: { code: string } }).error.code).toBe('config_read_error');
+});
+
+test('no config at all is an empty provider list, and /usage says no_provider', async () => {
+  const fake = await fakeLitellm();
+  const h = await service(fake, {});
+
+  const providers = await fetch(`${h.url}/providers?directory=/proj`, { headers: auth() });
+  expect(providers.status).toBe(200);
+  expect(await providers.json()).toEqual({ providers: [], default: null });
+
+  const usage = await fetch(`${h.url}/usage?directory=/proj`, { headers: auth() });
+  expect(usage.status).toBe(404);
+  expect(((await usage.json()) as { error: { code: string } }).error.code).toBe('no_provider');
 });

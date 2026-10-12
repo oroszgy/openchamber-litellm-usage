@@ -3,27 +3,26 @@
  * and the chosen one's usage, then render. Kept apart from `main.ts` so tests
  * can drive it with a stub host.
  *
- * Rolling spend is always shown; the key's total spend sits behind a toggle
+ * Rolling spend is always shown; the key's spend figure sits behind a toggle
  * whose choice is remembered per server (`host.storage`).
  */
 import type { HostClient } from '@openchamber/sdk';
 import { applyHostReady } from '@openchamber/sdk/ui';
-import { buildView, type Usage, type ViewRow } from './view-model.ts';
+import { buildView, type ViewRow } from './view-model.ts';
+import type { ProvidersResponse, UsageResponse } from '../shared/wire.ts';
 
 export type GuestHost = Pick<
   HostClient,
   'onReady' | 'onDirectory' | 'serviceRequest' | 'setHeight' | 'storage'
 >;
 
-type ProvidersResponse = { providers: Array<{ id: string; name: string; host: string }>; default: string | null };
-
-const SHOW_TOTAL_KEY = 'litellm-usage:show-total-spend';
+const SHOW_SPEND_KEY = 'litellm-usage:show-spend';
 
 export function start(host: GuestHost, root: HTMLElement): void {
   let directory: string | null = null;
   let generation = 0;
-  let showTotal = false;
-  let current: Usage | null = null;
+  let showSpend = false;
+  let current: UsageResponse | null = null;
   let started = false;
 
   host.onReady((ctx) => {
@@ -49,9 +48,9 @@ export function start(host: GuestHost, root: HTMLElement): void {
 
   async function readPreference(): Promise<void> {
     try {
-      showTotal = (await host.storage.get(SHOW_TOTAL_KEY)) === true;
+      showSpend = (await host.storage.get(SHOW_SPEND_KEY)) === true;
     } catch {
-      showTotal = false;
+      showSpend = false;
     }
   }
 
@@ -65,7 +64,7 @@ export function start(host: GuestHost, root: HTMLElement): void {
         showNoProvider();
         return;
       }
-      const usage = JSON.parse((await request('/usage', { provider: providers.default })).body) as Usage;
+      const usage = JSON.parse((await request('/usage', { provider: providers.default })).body) as UsageResponse;
       if (mine !== generation) return;
       showUsage(usage);
     } catch (cause) {
@@ -102,7 +101,7 @@ export function start(host: GuestHost, root: HTMLElement): void {
     setHeight(64);
   }
 
-  function showUsage(usage: Usage): void {
+  function showUsage(usage: UsageResponse): void {
     current = usage;
     const view = buildView(usage);
     const nodes: Node[] = [];
@@ -113,20 +112,20 @@ export function start(host: GuestHost, root: HTMLElement): void {
       nodes.push(line('llu-hint', view.degraded));
     }
 
-    if (showTotal) nodes.push(rowLine({ label: 'Total spent', value: view.total }));
+    if (showSpend) nodes.push(rowLine({ label: view.spendLabel, value: view.spendValue }));
 
-    const label = showTotal ? 'Hide total spend' : 'Show total spend';
-    nodes.push(actionButton('llu-toggle', label, () => void toggleTotal()));
+    const label = showSpend ? 'Hide spend' : 'Show spend';
+    nodes.push(actionButton('llu-toggle', label, () => void toggleSpend()));
 
     root.replaceChildren(...nodes);
     setHeight(root.scrollHeight || 72);
   }
 
-  async function toggleTotal(): Promise<void> {
-    showTotal = !showTotal;
+  async function toggleSpend(): Promise<void> {
+    showSpend = !showSpend;
     if (current) showUsage(current);
     try {
-      await host.storage.set(SHOW_TOTAL_KEY, showTotal);
+      await host.storage.set(SHOW_SPEND_KEY, showSpend);
     } catch {
       // A preference that cannot be saved is not a failure of the section.
     }

@@ -19,6 +19,7 @@ const usage = {
   provider: { id: 'litellm', name: 'LiteLLM', host: 'https://x' },
   asOf: '2026-10-09T12:00:00.000Z',
   spend: 1536.61,
+  spendKind: 'lifetime',
   rolling: { day: 1.2, week: 8.4, month: 21 },
 };
 
@@ -57,7 +58,7 @@ function hostStub(answers: {
   return { host, heights, requests, stored };
 }
 
-test('shows rolling spend at all times and hides the total by default', async () => {
+test('shows rolling spend at all times and hides the spend figure by default', async () => {
   const { host, heights, requests } = hostStub({ providers, usage });
   const root = document.createElement('div');
 
@@ -66,29 +67,44 @@ test('shows rolling spend at all times and hides the total by default', async ()
 
   const rows = [...root.querySelectorAll('.llu-row')].map((row) => row.textContent);
   expect(rows).toEqual(['Today$1.20', 'Last 7 days$8.40', 'Last 30 days$21.00']);
-  expect(root.querySelector('.llu-toggle')?.textContent).toBe('Show total spend');
+  expect(root.querySelector('.llu-toggle')?.textContent).toBe('Show spend');
   expect(requests[0]).toBe('/providers?directory=%2Fproj');
   expect(heights.length).toBeGreaterThan(0);
 });
 
-test('reveals the total spend when toggled and remembers it', async () => {
+test('reveals the spend figure when toggled and remembers it', async () => {
   const { host, stored } = hostStub({ providers, usage });
   const root = document.createElement('div');
 
   start(host, root);
   await settle();
-  expect(root.textContent).not.toContain('Total spent');
+  expect(root.textContent).not.toContain('Lifetime spend');
 
   (root.querySelector('.llu-toggle') as HTMLButtonElement).click();
   await settle();
 
   const rows = [...root.querySelectorAll('.llu-row')].map((row) => row.textContent);
-  expect(rows.at(-1)).toBe('Total spent$1,536.61');
-  expect(root.querySelector('.llu-toggle')?.textContent).toBe('Hide total spend');
-  expect(stored).toEqual([['litellm-usage:show-total-spend', true]]);
+  expect(rows.at(-1)).toBe('Lifetime spend$1,536.61');
+  expect(root.querySelector('.llu-toggle')?.textContent).toBe('Hide spend');
+  expect(stored).toEqual([['litellm-usage:show-spend', true]]);
 });
 
-test('honours a stored preference to show the total spend', async () => {
+test('a windowed key labels the revealed figure Spend', async () => {
+  const { host } = hostStub({
+    providers,
+    usage: { ...usage, spend: 12.5, spendKind: 'window' },
+    stored: true,
+  });
+  const root = document.createElement('div');
+
+  start(host, root);
+  await settle();
+
+  const rows = [...root.querySelectorAll('.llu-row')].map((row) => row.textContent);
+  expect(rows.at(-1)).toBe('Spend$12.50');
+});
+
+test('honours a stored preference to show the spend figure', async () => {
   const { host } = hostStub({ providers, usage, stored: true });
   const root = document.createElement('div');
 
@@ -96,8 +112,8 @@ test('honours a stored preference to show the total spend', async () => {
   await settle();
 
   const rows = [...root.querySelectorAll('.llu-row')].map((row) => row.textContent);
-  expect(rows.at(-1)).toBe('Total spent$1,536.61');
-  expect(root.querySelector('.llu-toggle')?.textContent).toBe('Hide total spend');
+  expect(rows.at(-1)).toBe('Lifetime spend$1,536.61');
+  expect(root.querySelector('.llu-toggle')?.textContent).toBe('Hide spend');
 });
 
 test('shows the degraded note when rolling spend is unavailable', async () => {
@@ -107,6 +123,7 @@ test('shows the degraded note when rolling spend is unavailable', async () => {
       provider: { id: 'litellm', name: 'LiteLLM', host: 'https://x' },
       asOf: '2026-10-09T12:00:00.000Z',
       spend: 5,
+      spendKind: 'lifetime',
       degraded: [
         { figure: 'rolling', code: 'rolling_unavailable', message: 'Rolling spend is unavailable for this key.' },
       ],
