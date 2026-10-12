@@ -1,4 +1,4 @@
-# <picture><source media="(prefers-color-scheme: dark)" srcset="icon.svg"><img src="icon.svg" alt="" width="32" height="32"></picture> LiteLLM Usage for OpenChamber
+# <picture><source media="(prefers-color-scheme: dark)" srcset="icon-dark.svg"><img src="icon.svg" alt="" width="32" height="32"></picture> LiteLLM Usage for OpenChamber
 
 An [OpenChamber](https://openchamber.dev) extension that shows your self-hosted
 [LiteLLM](https://docs.litellm.ai) proxy's spend inside the chat's **Work
