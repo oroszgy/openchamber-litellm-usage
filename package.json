@@ -1,22 +1,44 @@
 {
   "name": "litellm-usage",
-  "version": "0.1.0",
-  "private": true,
-  "description": "OpenChamber Work Status section showing LiteLLM proxy usage and credits balance.",
+  "version": "0.2.0",
+  "private": false,
+  "description": "OpenChamber Work Status section showing a self-hosted LiteLLM proxy's spend.",
   "license": "MIT",
   "type": "module",
+  "packageManager": "bun@1.4.0",
+  "engines": {
+    "bun": ">=1.4.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/oroszgy/openchamber-litellm-usage.git"
+  },
+  "homepage": "https://github.com/oroszgy/openchamber-litellm-usage#readme",
+  "bugs": {
+    "url": "https://github.com/oroszgy/openchamber-litellm-usage/issues"
+  },
+  "keywords": [
+    "openchamber",
+    "litellm",
+    "usage",
+    "spend",
+    "extension"
+  ],
   "scripts": {
     "build": "bun run build:status && bun run build:service",
     "build:status": "openchamber-guest-bundle status/main.ts status/main.js",
     "build:service": "openchamber-guest-bundle --node service/main.ts service/main.js",
     "typecheck": "tsc --noEmit",
-    "check": "bun run typecheck && bun run build",
+    "check": "bun run typecheck && bun run build && bun test",
+    "check:bundles": "bun run build && git diff --exit-code -- status/main.js service/main.js",
     "test": "bun test"
   },
   "devDependencies": {
-    "@openchamber/sdk": "^2.0.3",
-    "@types/bun": "^1.3.0",
-    "typescript": "^5.9.0"
+    "@happy-dom/global-registrator": "20.14.6",
+    "@openchamber/sdk": "2.1.1",
+    "@types/bun": "1.4.2",
+    "happy-dom": "20.14.6",
+    "typescript": "5.9.3"
   },
   "openchamber": {
     "apiVersion": 1,

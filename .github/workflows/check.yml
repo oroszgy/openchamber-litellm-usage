@@ -1,0 +1,23 @@
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # `check:bundles` compares the committed bundles with a fresh build
+      # byte-for-byte, and Bun's bundler names minified identifiers differently
+      # from one release to the next. So CI must build with exactly the version
+      # that produced the committed bundles: `packageManager` in package.json
+      # pins it, and setup-bun reads that field when no `bun-version` is given.
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run check
+      # `check` rebuilds the bundles but never compares them with the committed
+      # ones, so a stale bundle would pass every other test. Fail on drift.
+      - run: bun run check:bundles

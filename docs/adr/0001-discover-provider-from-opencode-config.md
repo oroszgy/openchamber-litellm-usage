@@ -1,6 +1,6 @@
 # 1. Discover the provider from OpenCode's config, not a credential form
 
-- **Status**: Accepted
+- **Status**: Accepted — partially implemented (see note)
 - **Date**: 2026-10-09
 - **Ticket**: [#2](https://github.com/oroszgy/openchamber-litellm-usage/issues/2)
 - **Map**: [#1](https://github.com/oroszgy/openchamber-litellm-usage/issues/1)
@@ -73,4 +73,19 @@ accepted; a LiteLLM **virtual key** (which can read only itself) is intended.
   OpenCode's config first.
 - The always-visible provider selector is the only user choice; its surface
   (header control + in-panel fallback) is the Layout decision
+  ([#7](https://github.com/oroszgy/openchamber-litellm-usage/issues/7)).
+
+## Implementation note (2026-10-12)
+
+Two parts of this decision are not built yet, and the shipped behaviour differs:
+
+- **The `/key/info` probe runs at read time, not at discovery.** `GET /providers`
+  is a deliberately static list (spec
+  [#12](https://github.com/oroszgy/openchamber-litellm-usage/issues/12) §6); a
+  candidate is confirmed only when `/usage` calls its `/key/info`. A proxy that
+  answers `/key/info` badly is therefore offered by `/providers` and then fails
+  as `unsupported_proxy` on `/usage`, rather than being hidden.
+- **The selector is not implemented.** The section uses the nearest-`litellm`
+  default on every load and does not persist a chosen id in `host.storage`; its
+  surface is still the Layout decision
   ([#7](https://github.com/oroszgy/openchamber-litellm-usage/issues/7)).

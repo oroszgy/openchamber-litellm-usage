@@ -1,6 +1,6 @@
 # 2. Feature-detect LiteLLM capabilities, never gate on version
 
-- **Status**: Accepted
+- **Status**: Accepted — partially implemented (see note)
 - **Date**: 2026-10-09
 - **Ticket**: [#8](https://github.com/oroszgy/openchamber-litellm-usage/issues/8)
 - **Map**: [#1](https://github.com/oroszgy/openchamber-litellm-usage/issues/1)
@@ -67,3 +67,13 @@ establishes only that a candidate is LiteLLM-shaped.
 - A proxy that answers `/key/info` with an unexpected shape is treated as
   unsupported rather than partially rendered — the required-field contract is
   the only hard gate.
+
+## Implementation note (2026-10-12)
+
+Only the spend half of this contract is built: the service reads `info.spend`
+(required) and `info.budget_duration` (to label the figure *Lifetime spend* or
+*Spend*), plus `info.user_id` for the rolling activity call. The optional budget
+fields in the table above (`max_budget`, `budget_reset_at`,
+`litellm_budget_table.soft_budget`, `budget_limits`) and the team lookup are
+prospective — they belong to the budget phase
+([#12](https://github.com/oroszgy/openchamber-litellm-usage/issues/12)).

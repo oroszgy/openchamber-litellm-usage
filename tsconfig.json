@@ -16,5 +16,5 @@
     "isolatedModules": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["status", "service", "tests"]
+  "include": ["status", "service", "shared", "tests"]
 }
