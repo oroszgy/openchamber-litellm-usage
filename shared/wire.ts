@@ -8,10 +8,26 @@
 
 export type ProviderRef = { id: string; name: string; host: string };
 
-/** `GET /providers`: the candidates and the one to use when none is requested. */
+/** Why a candidate was not confirmed as a LiteLLM proxy. */
+export type UnconfirmedCode =
+  | 'unauthorized'
+  | 'unsupported_proxy'
+  | 'provider_unreachable'
+  | 'upstream_error'
+  | 'no_key';
+
+/** A candidate the probe did not confirm; the key is never returned. */
+export type UnconfirmedRef = { id: string; name: string; host: string; code: UnconfirmedCode };
+
+/**
+ * `GET /providers`: the confirmed targets, the one to use when none is
+ * requested, and the candidates that were found but not confirmed.
+ */
 export type ProvidersResponse = {
   providers: ProviderRef[];
   default: string | null;
+  /** Omitted when every candidate was confirmed. */
+  rejected?: UnconfirmedRef[];
 };
 
 /**

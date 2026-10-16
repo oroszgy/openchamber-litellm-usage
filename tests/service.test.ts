@@ -72,7 +72,11 @@ async function fakeLitellm(seed?: {
 
 type Harness = { url: string; reads: string[]; fake: Fake };
 
-async function service(fake: Fake, files: Record<string, string>): Promise<Harness> {
+async function service(
+  fake: Fake,
+  files: Record<string, string>,
+  env: Partial<ServiceDeps['env']> = {},
+): Promise<Harness> {
   const reads: string[] = [];
   const deps: ServiceDeps = {
     token: TOKEN,
@@ -82,7 +86,9 @@ async function service(fake: Fake, files: Record<string, string>): Promise<Harne
       home: '/home/test',
       xdgConfigHome: '/home/test/.config',
       xdgDataHome: '/home/test/.local/share',
+      vars: {},
       timeZone: 'UTC',
+      ...env,
     },
     readText: async (path) => {
       reads.push(path);
@@ -122,12 +128,14 @@ test('providers lists candidates by management root and never leaks the key', as
 
   const res = await fetch(`${h.url}/providers?directory=/proj`, { headers: auth() });
   expect(res.status).toBe(200);
-  const body = (await res.json()) as { providers: unknown[]; default: string };
+  const body = (await res.json()) as { providers: unknown[]; default: string; rejected?: unknown };
 
   expect(body.default).toBe('litellm');
   expect(body.providers).toEqual([{ id: 'litellm', name: 'LiteLLM', host: fake.url }]);
+  expect(body.rejected).toBeUndefined();
   expect(JSON.stringify(body)).not.toContain('sk-test');
-  expect(fake.calls).toHaveLength(0);
+  // The one probe, and no LiteLLM read beyond it.
+  expect(fake.calls.filter((call) => call === '/key/info')).toHaveLength(1);
 });
 
 test('usage reads spend and buckets rolling windows', async () => {
@@ -174,14 +182,25 @@ test('usage reads spend and buckets rolling windows', async () => {
   expect(fake.auth[activityIndex]).toBe('Bearer sk-test');
 });
 
-test('a key with no readable spend is a fatal unsupported_proxy', async () => {
+test('a key with no readable spend is not confirmed, and says why', async () => {
   const fake = await fakeLitellm({ info: {} });
   const h = await service(fake, { '/proj/opencode.json': opencodeConfig(fake.url) });
 
+  const providers = await fetch(`${h.url}/providers?directory=/proj`, { headers: auth() });
+  expect(providers.status).toBe(200);
+  const listed = (await providers.json()) as {
+    providers: unknown[];
+    default: string | null;
+    rejected?: Array<{ id: string; name: string; host: string; code: string }>;
+  };
+  expect(listed.providers).toEqual([]);
+  expect(listed.default).toBeNull();
+  expect(listed.rejected).toEqual([{ id: 'litellm', name: 'LiteLLM', host: fake.url, code: 'unsupported_proxy' }]);
+
   const res = await fetch(`${h.url}/usage?provider=litellm&directory=/proj`, { headers: auth() });
-  expect(res.status).toBe(502);
+  expect(res.status).toBe(404);
   const body = (await res.json()) as { error: { code: string } };
-  expect(body.error.code).toBe('unsupported_proxy');
+  expect(body.error.code).toBe('no_provider');
 });
 
 test('unknown provider is a fatal no_provider', async () => {
@@ -261,4 +280,61 @@ test('no config at all is an empty provider list, and /usage says no_provider', 
   const usage = await fetch(`${h.url}/usage?directory=/proj`, { headers: auth() });
   expect(usage.status).toBe(404);
   expect(((await usage.json()) as { error: { code: string } }).error.code).toBe('no_provider');
+});
+
+test("a typo'd provider name is still found, because the probe recognizes it", async () => {
+  const fake = await fakeLitellm();
+  const h = await service(fake, {
+    '/proj/opencode.json': JSON.stringify({
+      provider: { litelm: { name: 'Litelm', options: { baseURL: `${fake.url}/v1`, apiKey: 'sk-test' } } },
+    }),
+  });
+
+  const res = await fetch(`${h.url}/providers?directory=/proj`, { headers: auth() });
+  const body = (await res.json()) as { providers: unknown[]; default: string };
+  expect(body.default).toBe('litelm');
+  expect(body.providers).toEqual([{ id: 'litelm', name: 'Litelm', host: fake.url }]);
+});
+
+test('a candidate the probe rejects is reported, without its key', async () => {
+  const fake = await fakeLitellm();
+  const h = await service(fake, {
+    '/proj/opencode.json': JSON.stringify({
+      provider: {
+        litellm: { name: 'LiteLLM', options: { baseURL: `${fake.url}/v1`, apiKey: 'sk-test' } },
+        other: { name: 'Other proxy', options: { baseURL: 'http://127.0.0.1:1/v1', apiKey: 'sk-other' } },
+      },
+    }),
+  });
+
+  const res = await fetch(`${h.url}/providers?directory=/proj`, { headers: auth() });
+  const body = (await res.json()) as {
+    providers: Array<{ id: string }>;
+    rejected?: Array<{ id: string; name: string; host: string; code: string }>;
+  };
+  expect(body.providers.map((provider) => provider.id)).toEqual(['litellm']);
+  expect(body.rejected).toEqual([{ id: 'other', name: 'Other proxy', host: 'http://127.0.0.1:1', code: 'provider_unreachable' }]);
+  expect(JSON.stringify(body)).not.toContain('sk-other');
+});
+
+test('a provider added to .opencode/opencode.json is found', async () => {
+  const fake = await fakeLitellm();
+  const h = await service(fake, { '/proj/.opencode/opencode.json': opencodeConfig(fake.url) });
+
+  const res = await fetch(`${h.url}/providers?directory=/proj`, { headers: auth() });
+  const body = (await res.json()) as { providers: unknown[]; default: string };
+  expect(body.default).toBe('litellm');
+});
+
+test('a provider in the custom OPENCODE_CONFIG file is found', async () => {
+  const fake = await fakeLitellm();
+  const h = await service(
+    fake,
+    { '/custom/cfg.json': opencodeConfig(fake.url) },
+    { vars: { OPENCODE_CONFIG: '/custom/cfg.json' } },
+  );
+
+  const res = await fetch(`${h.url}/providers?directory=/proj`, { headers: auth() });
+  const body = (await res.json()) as { providers: unknown[]; default: string };
+  expect(body.default).toBe('litellm');
 });

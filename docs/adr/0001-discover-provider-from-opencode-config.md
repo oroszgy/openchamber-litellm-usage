@@ -1,6 +1,8 @@
 # 1. Discover the provider from OpenCode's config, not a credential form
 
-- **Status**: Accepted — partially implemented (see note)
+- **Status**: Accepted — partially implemented (see note). The source list and
+  precedence below are corrected by
+  [ADR-0003](0003-probe-gated-discovery.md).
 - **Date**: 2026-10-09
 - **Ticket**: [#2](https://github.com/oroszgy/openchamber-litellm-usage/issues/2)
 - **Map**: [#1](https://github.com/oroszgy/openchamber-litellm-usage/issues/1)

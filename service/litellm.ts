@@ -20,11 +20,22 @@ export type KeyInfo =
   | { ok: true; spend: number; spendKind: SpendKind; userId?: string | undefined }
   | { ok: false; code: KeyInfoFailure };
 
-export async function readKeyInfo(fetchImpl: typeof fetch, target: Target): Promise<KeyInfo> {
+/**
+ * The probe's deadline. A discovery read probes every candidate in parallel, so
+ * one dead endpoint must not stall the whole list.
+ */
+export const PROBE_TIMEOUT_MS = 2000;
+
+export async function readKeyInfo(
+  fetchImpl: typeof fetch,
+  target: Target,
+  timeoutMs: number = PROBE_TIMEOUT_MS,
+): Promise<KeyInfo> {
   let response: Response;
   try {
     response = await fetchImpl(`${target.host}/key/info`, {
       headers: { authorization: `Bearer ${target.key}` },
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch {
     return { ok: false, code: 'provider_unreachable' };

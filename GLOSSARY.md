@@ -34,6 +34,19 @@ An entry in OpenCode's configuration naming a model endpoint; the extension
 reads a LiteLLM provider's URL and key from it.
 _Avoid_: Config, connection
 
+**Candidate**:
+A provider that might be a LiteLLM proxy, before a probe confirms it.
+_Avoid_: Match, hit
+
+**Target**:
+A candidate a probe has confirmed is a LiteLLM proxy, together with the virtual
+key used to read it.
+_Avoid_: Endpoint, upstream
+
+**Unconfirmed candidate**:
+A candidate the probe did not confirm; the probe's reason travels with it.
+_Avoid_: Rejected provider, failed provider
+
 **Management root**:
 The proxy's management-API base: the provider's `baseURL` with a trailing `/v1`
 removed.

@@ -5,15 +5,10 @@
  * `service/main.ts` is the thin bootstrap that binds loopback.
  */
 import type { IncomingMessage, RequestListener, ServerResponse } from 'node:http';
-import {
-  ConfigReadError,
-  defaultProviderId,
-  discoverProviders,
-  type ConfigEnv,
-  type Provider,
-} from './config.ts';
+import { ConfigReadError, defaultProviderId, type ConfigEnv } from './config.ts';
+import { createDiscovery, type Discovery, type Target } from './discovery.ts';
 import { bucketRolling, localDate, offsetMinutes, shiftDate } from './dates.ts';
-import { readDailyActivity, readKeyInfo, type KeyInfoFailure, type Target } from './litellm.ts';
+import { readDailyActivity } from './litellm.ts';
 import type { ProviderRef, ProvidersResponse, UsageResponse } from '../shared/wire.ts';
 
 export type ServiceDeps = {
@@ -25,22 +20,22 @@ export type ServiceDeps = {
 };
 
 type Answer = { status: number; body: unknown };
+type Discover = (directory: string | null) => Promise<Discovery>;
 
 const error = (status: number, code: string, message: string): Answer => ({
   status,
   body: { error: { code, message } },
 });
 
-const MESSAGES: Record<KeyInfoFailure, string> = {
-  unauthorized: 'The LiteLLM key was rejected.',
-  unsupported_proxy: 'The proxy did not return a readable key.',
-  provider_unreachable: 'The LiteLLM proxy could not be reached.',
-  upstream_error: 'The LiteLLM proxy returned an unexpected response.',
-};
-
 export function createService(deps: ServiceDeps): RequestListener {
+  const discover = createDiscovery({
+    readText: deps.readText,
+    env: deps.env,
+    fetch: deps.fetch,
+    now: () => deps.now().getTime(),
+  });
   return (request, response) => {
-    void handle(deps, request)
+    void handle(deps, discover, request)
       .then((answer) => send(response, answer))
       .catch((cause: unknown) => {
         // Log locally; never hand the guest an internal message.
@@ -50,7 +45,7 @@ export function createService(deps: ServiceDeps): RequestListener {
   };
 }
 
-async function handle(deps: ServiceDeps, request: IncomingMessage): Promise<Answer> {
+async function handle(deps: ServiceDeps, discover: Discover, request: IncomingMessage): Promise<Answer> {
   if (request.headers.authorization !== `Bearer ${deps.token}`) {
     return error(401, 'unauthorized', 'Missing or invalid bearer token.');
   }
@@ -60,8 +55,8 @@ async function handle(deps: ServiceDeps, request: IncomingMessage): Promise<Answ
 
   try {
     if (url.pathname === '/health') return { status: 200, body: { ok: true } };
-    if (url.pathname === '/providers') return await listProviders(deps, url.searchParams.get('directory'));
-    if (url.pathname === '/usage') return await usage(deps, url);
+    if (url.pathname === '/providers') return await listProviders(discover, url.searchParams.get('directory'));
+    if (url.pathname === '/usage') return await usage(deps, discover, url);
   } catch (cause) {
     if (cause instanceof ConfigReadError) {
       return error(500, 'config_read_error', 'The OpenCode configuration could not be read.');
@@ -71,35 +66,32 @@ async function handle(deps: ServiceDeps, request: IncomingMessage): Promise<Answ
   return error(404, 'not_found', 'Not found.');
 }
 
-async function listProviders(deps: ServiceDeps, directory: string | null): Promise<Answer> {
-  const providers = await discoverProviders(directory, deps);
+async function listProviders(discover: Discover, directory: string | null): Promise<Answer> {
+  const { confirmed, unconfirmed } = await discover(directory);
   const body: ProvidersResponse = {
-    providers: providers.map(publicProvider),
-    default: defaultProviderId(providers.map((provider) => provider.id)),
+    providers: confirmed.map(publicTarget),
+    default: defaultProviderId(confirmed.map((target) => target.id)),
   };
+  if (unconfirmed.length > 0) body.rejected = unconfirmed;
   return { status: 200, body };
 }
 
-async function usage(deps: ServiceDeps, url: URL): Promise<Answer> {
+async function usage(deps: ServiceDeps, discover: Discover, url: URL): Promise<Answer> {
   const directory = url.searchParams.get('directory');
-  const providers = await discoverProviders(directory, deps);
-  const requested = url.searchParams.get('provider') ?? defaultProviderId(providers.map((p) => p.id));
-  const provider = providers.find((candidate) => candidate.id === requested);
-  if (!provider) return error(404, 'no_provider', `No LiteLLM provider matching '${requested ?? ''}'.`);
-
-  const target: Target = { host: provider.host, key: provider.key };
-  const info = await readKeyInfo(deps.fetch, target);
-  if (!info.ok) return error(502, info.code, MESSAGES[info.code]);
+  const { confirmed } = await discover(directory);
+  const requested = url.searchParams.get('provider') ?? defaultProviderId(confirmed.map((target) => target.id));
+  const target = confirmed.find((candidate) => candidate.id === requested);
+  if (!target) return error(404, 'no_provider', `No LiteLLM provider matching '${requested ?? ''}'.`);
 
   const now = deps.now();
   const timeZone = deps.env.timeZone ?? 'UTC';
   const today = localDate(now, timeZone);
 
   const body: UsageResponse = {
-    provider: publicProvider(provider),
+    provider: publicTarget(target),
     asOf: now.toISOString(),
-    spend: info.spend,
-    spendKind: info.spendKind,
+    spend: target.info.spend,
+    spendKind: target.info.spendKind,
   };
 
   const rollingDegraded = {
@@ -108,7 +100,7 @@ async function usage(deps: ServiceDeps, url: URL): Promise<Answer> {
     message: 'Rolling spend is unavailable for this key.',
   };
 
-  if (!info.userId) {
+  if (!target.info.userId) {
     body.degraded = [rollingDegraded];
   } else {
     const buckets = await readDailyActivity(
@@ -128,8 +120,8 @@ async function usage(deps: ServiceDeps, url: URL): Promise<Answer> {
   return { status: 200, body };
 }
 
-function publicProvider(provider: Provider): ProviderRef {
-  return { id: provider.id, name: provider.name, host: provider.host };
+function publicTarget(target: Target): ProviderRef {
+  return { id: target.id, name: target.name, host: target.host };
 }
 
 function send(response: ServerResponse, answer: Answer): void {

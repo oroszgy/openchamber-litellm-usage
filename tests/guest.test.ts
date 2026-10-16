@@ -262,6 +262,23 @@ test('renders the no-provider hint', async () => {
   expect(root.textContent).toContain('No LiteLLM provider found');
 });
 
+test('names the unconfirmed candidates when nothing was confirmed', async () => {
+  const { host } = hostStub({
+    providers: {
+      providers: [],
+      default: null,
+      rejected: [{ id: 'litelm', name: 'Litelm', host: 'https://x', code: 'unsupported_proxy' }],
+    },
+  });
+  const root = document.createElement('div');
+
+  start(host, root);
+  await settle();
+
+  expect(root.textContent).toContain('Litelm (https://x) did not answer /key/info.');
+  expect(root.textContent).toContain('Add a LiteLLM provider');
+});
+
 test('renders a service error with a retry', async () => {
   const root = document.createElement('div');
   const host = {

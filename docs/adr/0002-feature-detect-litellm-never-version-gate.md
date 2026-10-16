@@ -1,6 +1,8 @@
 # 2. Feature-detect LiteLLM capabilities, never gate on version
 
-- **Status**: Accepted — partially implemented (see note)
+- **Status**: Accepted — partially implemented (see note). The "no shape gate at
+  config discovery" consequence is superseded by
+  [ADR-0003](0003-probe-gated-discovery.md).
 - **Date**: 2026-10-09
 - **Ticket**: [#8](https://github.com/oroszgy/openchamber-litellm-usage/issues/8)
 - **Map**: [#1](https://github.com/oroszgy/openchamber-litellm-usage/issues/1)

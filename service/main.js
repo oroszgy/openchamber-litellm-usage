@@ -3,6 +3,9 @@ import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { homedir } from "node:os";
 
+// service/config.ts
+import { dirname, isAbsolute, join } from "node:path";
+
 // service/jsonc.ts
 function parseJsonc(text) {
   return JSON.parse(stripJsonc(text));
@@ -60,38 +63,55 @@ function managementRoot(baseURL) {
   const trimmed = baseURL.replace(/\/+$/, "");
   return trimmed.endsWith("/v1") ? trimmed.slice(0, -3) : trimmed;
 }
-async function discoverProviders(directory, deps) {
-  const configHome = deps.env.xdgConfigHome ?? `${deps.env.home}/.config`;
-  const dataHome = deps.env.xdgDataHome ?? `${deps.env.home}/.local/share`;
-  const sources = [];
-  if (directory)
-    sources.push([`${directory}/opencode.json`, `${directory}/opencode.jsonc`]);
-  sources.push([`${configHome}/opencode/opencode.json`, `${configHome}/opencode/opencode.jsonc`]);
-  sources.push([
-    `${deps.env.home}/.config/openchamber/opencode.managed.json`,
-    `${deps.env.home}/.config/openchamber/opencode.managed.jsonc`
-  ]);
+async function readCandidates(directory, deps) {
+  const { env } = deps;
+  const vars = env.vars ?? {};
+  const configHome = env.xdgConfigHome ?? `${env.home}/.config`;
+  const dataHome = env.xdgDataHome ?? `${env.home}/.local/share`;
+  const configDir = vars.OPENCODE_CONFIG_DIR ?? `${configHome}/opencode`;
+  const layers = [`${configDir}/opencode.jsonc`, `${configDir}/opencode.json`];
+  if (directory) {
+    layers.push(`${directory}/opencode.jsonc`, `${directory}/opencode.json`, `${directory}/.opencode/opencode.jsonc`, `${directory}/.opencode/opencode.json`);
+  }
+  const custom = vars.OPENCODE_CONFIG;
+  if (custom) {
+    layers.push(custom);
+  } else {
+    layers.push(`${env.home}/.config/openchamber/opencode.managed.jsonc`, `${env.home}/.config/openchamber/opencode.managed.json`);
+  }
   const merged = {};
-  for (const paths of [...sources].reverse()) {
-    const config = await readFirst(paths, deps.readText);
-    for (const [id, entry] of Object.entries(config.provider ?? {})) {
+  for (const path of layers) {
+    const text = await deps.readText(path);
+    if (text === null)
+      continue;
+    let config;
+    try {
+      config = parseJsonc(text);
+    } catch {
+      throw new ConfigReadError(path);
+    }
+    const entries = { ...config.provider, ...config.providers };
+    const baseDir = dirname(path);
+    for (const [id, entry] of Object.entries(entries)) {
+      const resolved = await resolveEntry(entry, baseDir, deps);
       const prior = merged[id];
-      merged[id] = { ...prior, ...entry, options: { ...prior?.options, ...entry?.options } };
+      merged[id] = { ...prior, ...resolved, options: { ...prior?.options, ...resolved.options } };
     }
   }
   const authKeys = await readAuthKeys(`${dataHome}/opencode/auth.json`, deps.readText);
-  const providers = [];
+  const candidates = [];
   for (const [id, entry] of Object.entries(merged)) {
-    const name = entry.name ?? id;
-    if (!`${id} ${name}`.toLowerCase().includes("litellm"))
-      continue;
     const baseURL = entry.options?.baseURL;
-    const key = entry.options?.apiKey ?? authKeys[id];
-    if (!baseURL || !key)
+    if (!baseURL)
       continue;
-    providers.push({ id, name, host: managementRoot(baseURL), key });
+    candidates.push({
+      id,
+      name: entry.name ?? id,
+      host: managementRoot(baseURL),
+      key: entry.options?.apiKey ?? authKeys[id] ?? null
+    });
   }
-  return providers;
+  return candidates;
 }
 function defaultProviderId(ids) {
   let best = null;
@@ -105,18 +125,32 @@ function defaultProviderId(ids) {
   }
   return best;
 }
-async function readFirst(paths, readText) {
-  for (const path of paths) {
-    const text = await readText(path);
-    if (text === null)
-      continue;
-    try {
-      return parseJsonc(text);
-    } catch {
-      throw new ConfigReadError(path);
+async function resolveEntry(entry, baseDir, deps) {
+  const baseURL = entry.options?.baseURL ?? entry.settings?.baseURL;
+  const rawKey = entry.options?.apiKey ?? entry.settings?.apiKey;
+  const apiKey = await resolveKey(rawKey, baseDir, deps);
+  return {
+    ...entry.name !== undefined ? { name: entry.name } : {},
+    options: {
+      ...baseURL !== undefined ? { baseURL } : {},
+      ...apiKey !== null ? { apiKey } : {}
     }
+  };
+}
+async function resolveKey(raw, baseDir, deps) {
+  if (!raw)
+    return null;
+  const envRef = /^\{env:([A-Za-z_][A-Za-z0-9_]*)\}$/.exec(raw);
+  if (envRef)
+    return deps.env.vars?.[envRef[1]] ?? null;
+  const fileRef = /^\{file:(.+)\}$/.exec(raw);
+  if (fileRef) {
+    const target = fileRef[1].trim();
+    const path = target.startsWith("~/") ? join(deps.env.home, target.slice(2)) : isAbsolute(target) ? target : join(baseDir, target);
+    const text = await deps.readText(path);
+    return text === null ? null : text.trim();
   }
-  return {};
+  return raw;
 }
 async function readAuthKeys(path, readText) {
   const text = await readText(path);
@@ -150,65 +184,15 @@ function editDistance(a, b) {
   return grid[a.length]?.[b.length] ?? 0;
 }
 
-// service/dates.ts
-function offsetMinutes(date, timeZone) {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    hourCycle: "h23",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit"
-  }).formatToParts(date);
-  const part = (type) => Number(parts.find((entry) => entry.type === type)?.value ?? "0");
-  const wallClock = Date.UTC(part("year"), part("month") - 1, part("day"), part("hour"), part("minute"), part("second"));
-  return Math.round((date.getTime() - wallClock) / 60000);
-}
-function localDate(date, timeZone) {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit"
-  }).formatToParts(date);
-  const value = (type) => parts.find((part) => part.type === type)?.value ?? "01";
-  return `${value("year")}-${value("month")}-${value("day")}`;
-}
-function shiftDate(date, days) {
-  const [year, month, day] = date.split("-").map(Number);
-  const shifted = new Date(Date.UTC(year ?? 1970, (month ?? 1) - 1, day ?? 1));
-  shifted.setUTCDate(shifted.getUTCDate() + days);
-  return shifted.toISOString().slice(0, 10);
-}
-function bucketRolling(buckets, today) {
-  const weekStart = shiftDate(today, -6);
-  const monthStart = shiftDate(today, -29);
-  let day = 0;
-  let week = 0;
-  let month = 0;
-  for (const bucket of buckets) {
-    if (bucket.date === today)
-      day += bucket.spend;
-    if (bucket.date >= weekStart && bucket.date <= today)
-      week += bucket.spend;
-    if (bucket.date >= monthStart && bucket.date <= today)
-      month += bucket.spend;
-  }
-  return { day: round(day), week: round(week), month: round(month) };
-}
-function round(value) {
-  return Math.round(value * 1e6) / 1e6;
-}
-
 // service/litellm.ts
 import { createHash } from "node:crypto";
-async function readKeyInfo(fetchImpl, target) {
+var PROBE_TIMEOUT_MS = 2000;
+async function readKeyInfo(fetchImpl, target, timeoutMs = PROBE_TIMEOUT_MS) {
   let response;
   try {
     response = await fetchImpl(`${target.host}/key/info`, {
-      headers: { authorization: `Bearer ${target.key}` }
+      headers: { authorization: `Bearer ${target.key}` },
+      signal: AbortSignal.timeout(timeoutMs)
     });
   } catch {
     return { ok: false, code: "provider_unreachable" };
@@ -270,26 +254,122 @@ async function readDailyActivity(fetchImpl, target, startDate, endDate, timezone
   return buckets;
 }
 
+// service/discovery.ts
+var PROBE_CACHE_MS = 60000;
+function createDiscovery(deps) {
+  const cache = new Map;
+  const now = deps.now ?? Date.now;
+  async function probe(candidate, at) {
+    if (candidate.key === null)
+      return { ok: false, code: "no_key" };
+    const cacheKey = `${candidate.host}\x00${candidate.key}`;
+    const cached = cache.get(cacheKey);
+    if (cached && at - cached.at < PROBE_CACHE_MS)
+      return cached.result;
+    const result = await readKeyInfo(deps.fetch, { host: candidate.host, key: candidate.key });
+    cache.set(cacheKey, { at, result });
+    return result;
+  }
+  return async function discover(directory) {
+    const candidates = await readCandidates(directory, deps);
+    const at = now();
+    const probed = await Promise.all(candidates.map(async (candidate) => ({ candidate, result: await probe(candidate, at) })));
+    const confirmed = [];
+    const unconfirmed = [];
+    for (const { candidate, result } of probed) {
+      if (result.ok && candidate.key !== null) {
+        confirmed.push({
+          id: candidate.id,
+          name: candidate.name,
+          host: candidate.host,
+          key: candidate.key,
+          info: result
+        });
+      } else {
+        unconfirmed.push({
+          id: candidate.id,
+          name: candidate.name,
+          host: candidate.host,
+          code: result.ok ? "no_key" : result.code
+        });
+      }
+    }
+    return { confirmed, unconfirmed };
+  };
+}
+
+// service/dates.ts
+function offsetMinutes(date, timeZone) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hourCycle: "h23",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit"
+  }).formatToParts(date);
+  const part = (type) => Number(parts.find((entry) => entry.type === type)?.value ?? "0");
+  const wallClock = Date.UTC(part("year"), part("month") - 1, part("day"), part("hour"), part("minute"), part("second"));
+  return Math.round((date.getTime() - wallClock) / 60000);
+}
+function localDate(date, timeZone) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(date);
+  const value = (type) => parts.find((part) => part.type === type)?.value ?? "01";
+  return `${value("year")}-${value("month")}-${value("day")}`;
+}
+function shiftDate(date, days) {
+  const [year, month, day] = date.split("-").map(Number);
+  const shifted = new Date(Date.UTC(year ?? 1970, (month ?? 1) - 1, day ?? 1));
+  shifted.setUTCDate(shifted.getUTCDate() + days);
+  return shifted.toISOString().slice(0, 10);
+}
+function bucketRolling(buckets, today) {
+  const weekStart = shiftDate(today, -6);
+  const monthStart = shiftDate(today, -29);
+  let day = 0;
+  let week = 0;
+  let month = 0;
+  for (const bucket of buckets) {
+    if (bucket.date === today)
+      day += bucket.spend;
+    if (bucket.date >= weekStart && bucket.date <= today)
+      week += bucket.spend;
+    if (bucket.date >= monthStart && bucket.date <= today)
+      month += bucket.spend;
+  }
+  return { day: round(day), week: round(week), month: round(month) };
+}
+function round(value) {
+  return Math.round(value * 1e6) / 1e6;
+}
+
 // service/app.ts
 var error = (status, code, message) => ({
   status,
   body: { error: { code, message } }
 });
-var MESSAGES = {
-  unauthorized: "The LiteLLM key was rejected.",
-  unsupported_proxy: "The proxy did not return a readable key.",
-  provider_unreachable: "The LiteLLM proxy could not be reached.",
-  upstream_error: "The LiteLLM proxy returned an unexpected response."
-};
 function createService(deps) {
+  const discover = createDiscovery({
+    readText: deps.readText,
+    env: deps.env,
+    fetch: deps.fetch,
+    now: () => deps.now().getTime()
+  });
   return (request, response) => {
-    handle(deps, request).then((answer) => send(response, answer)).catch((cause) => {
+    handle(deps, discover, request).then((answer) => send(response, answer)).catch((cause) => {
       console.error("[litellm-usage] unhandled service error:", cause);
       send(response, error(502, "upstream_error", "The service could not complete the request."));
     });
   };
 }
-async function handle(deps, request) {
+async function handle(deps, discover, request) {
   if (request.headers.authorization !== `Bearer ${deps.token}`) {
     return error(401, "unauthorized", "Missing or invalid bearer token.");
   }
@@ -300,9 +380,9 @@ async function handle(deps, request) {
     if (url.pathname === "/health")
       return { status: 200, body: { ok: true } };
     if (url.pathname === "/providers")
-      return await listProviders(deps, url.searchParams.get("directory"));
+      return await listProviders(discover, url.searchParams.get("directory"));
     if (url.pathname === "/usage")
-      return await usage(deps, url);
+      return await usage(deps, discover, url);
   } catch (cause) {
     if (cause instanceof ConfigReadError) {
       return error(500, "config_read_error", "The OpenCode configuration could not be read.");
@@ -311,40 +391,38 @@ async function handle(deps, request) {
   }
   return error(404, "not_found", "Not found.");
 }
-async function listProviders(deps, directory) {
-  const providers = await discoverProviders(directory, deps);
+async function listProviders(discover, directory) {
+  const { confirmed, unconfirmed } = await discover(directory);
   const body = {
-    providers: providers.map(publicProvider),
-    default: defaultProviderId(providers.map((provider) => provider.id))
+    providers: confirmed.map(publicTarget),
+    default: defaultProviderId(confirmed.map((target) => target.id))
   };
+  if (unconfirmed.length > 0)
+    body.rejected = unconfirmed;
   return { status: 200, body };
 }
-async function usage(deps, url) {
+async function usage(deps, discover, url) {
   const directory = url.searchParams.get("directory");
-  const providers = await discoverProviders(directory, deps);
-  const requested = url.searchParams.get("provider") ?? defaultProviderId(providers.map((p) => p.id));
-  const provider = providers.find((candidate) => candidate.id === requested);
-  if (!provider)
+  const { confirmed } = await discover(directory);
+  const requested = url.searchParams.get("provider") ?? defaultProviderId(confirmed.map((target2) => target2.id));
+  const target = confirmed.find((candidate) => candidate.id === requested);
+  if (!target)
     return error(404, "no_provider", `No LiteLLM provider matching '${requested ?? ""}'.`);
-  const target = { host: provider.host, key: provider.key };
-  const info = await readKeyInfo(deps.fetch, target);
-  if (!info.ok)
-    return error(502, info.code, MESSAGES[info.code]);
   const now = deps.now();
   const timeZone = deps.env.timeZone ?? "UTC";
   const today = localDate(now, timeZone);
   const body = {
-    provider: publicProvider(provider),
+    provider: publicTarget(target),
     asOf: now.toISOString(),
-    spend: info.spend,
-    spendKind: info.spendKind
+    spend: target.info.spend,
+    spendKind: target.info.spendKind
   };
   const rollingDegraded = {
     figure: "rolling",
     code: "rolling_unavailable",
     message: "Rolling spend is unavailable for this key."
   };
-  if (!info.userId) {
+  if (!target.info.userId) {
     body.degraded = [rollingDegraded];
   } else {
     const buckets = await readDailyActivity(deps.fetch, target, shiftDate(today, -29), today, offsetMinutes(now, timeZone));
@@ -356,8 +434,8 @@ async function usage(deps, url) {
   }
   return { status: 200, body };
 }
-function publicProvider(provider) {
-  return { id: provider.id, name: provider.name, host: provider.host };
+function publicTarget(target) {
+  return { id: target.id, name: target.name, host: target.host };
 }
 function send(response, answer) {
   response.writeHead(answer.status, { "content-type": "application/json" });
@@ -385,6 +463,7 @@ var server = createServer(createService({
     home: homedir(),
     xdgConfigHome: process.env.XDG_CONFIG_HOME,
     xdgDataHome: process.env.XDG_DATA_HOME,
+    vars: process.env,
     timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
   },
   readText: async (path) => {

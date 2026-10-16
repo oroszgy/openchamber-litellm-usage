@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import type { UsageResponse } from '../shared/wire';
-import { buildView, formatUsd } from '../status/view-model';
+import { buildView, formatUsd, unconfirmedLines } from '../status/view-model';
 
 const base: UsageResponse = {
   provider: { id: 'litellm', name: 'LiteLLM', host: 'https://proxy.example.com' },
@@ -47,4 +47,13 @@ test('buildView omits rolling rows and surfaces a degraded note', () => {
   expect(view.spendValue).toBe('$5.00');
   expect(view.rolling).toEqual([]);
   expect(view.degraded).toBe('Rolling spend is unavailable for this key.');
+});
+
+test('unconfirmedLines names each candidate and the reason', () => {
+  expect(
+    unconfirmedLines([
+      { id: 'litelm', name: 'Litelm', host: 'https://h', code: 'unsupported_proxy' },
+      { id: 'keyless', name: 'Keyless', host: 'https://g', code: 'no_key' },
+    ]),
+  ).toEqual(['Litelm (https://h) did not answer /key/info.', 'Keyless (https://g) has no key configured.']);
 });
