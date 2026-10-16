@@ -33,6 +33,7 @@ const server = createServer(
       home: homedir(),
       xdgConfigHome: process.env.XDG_CONFIG_HOME,
       xdgDataHome: process.env.XDG_DATA_HOME,
+      vars: process.env,
       timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     },
     readText: async (path) => {

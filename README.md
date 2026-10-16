@@ -49,18 +49,25 @@ it and install the folder — see [Development](#development).
 
 There is no credential form. The extension reads the proxy **base URL** and
 **virtual key** from OpenCode's own configuration, so a user who already calls
-the proxy from OpenCode gets the section working with no new input.
+the proxy from OpenCode — including one added through OpenChamber's provider UI —
+gets the section working with no new input.
 
-- It scans OpenCode's config as `.json` **and** `.jsonc`, in precedence order —
-  the open project's `<directory>/opencode.json(c)`, then the global
-  `~/.config/opencode/opencode.json(c)`, then OpenChamber's managed copy. The
-  same provider id in a more specific source wins.
-- A candidate is a provider whose **id or display name contains `litellm`**
-  (case-insensitive). Its URL is the provider's `baseURL` with a trailing `/v1`
-  removed (the management root); its key is the entry's inline `apiKey`, falling
-  back to OpenCode's credential store `~/.local/share/opencode/auth.json`.
-- With several candidates, the one nearest the string `litellm` is used. When
-  none is found, the section shows a one-line hint pointing at the config.
+- It scans OpenCode's config as `.json` **and** `.jsonc`, in OpenCode's own
+  precedence — the global `~/.config/opencode/opencode.json(c)` (or
+  `$OPENCODE_CONFIG_DIR`), then the project's `opencode.json(c)` and
+  `.opencode/opencode.json(c)`, then `$OPENCODE_CONFIG` (else OpenChamber's
+  managed copy). The same provider id in a later source wins.
+- A **candidate** is any provider with a `baseURL`, whatever its name. Its URL is
+  that `baseURL` with a trailing `/v1` removed (the management root); its key is
+  the entry's inline `apiKey` — with `{env:NAME}` and `{file:path}` references
+  resolved — falling back to OpenCode's credential store
+  `~/.local/share/opencode/auth.json`.
+- A candidate is used only if a **probe** (`GET /key/info`) confirms it is a
+  LiteLLM proxy. So the name is not trusted: a provider typo'd as `litelm` is
+  still found. Candidates the probe rejects are listed with the reason.
+- With several confirmed candidates, the one nearest the string `litellm` is
+  used. When none is confirmed, the section names each candidate and why it was
+  not confirmed.
 
 A virtual key reads only itself, which is all this extension needs; no master key
 is involved.

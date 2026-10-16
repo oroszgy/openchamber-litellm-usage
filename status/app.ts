@@ -13,8 +13,8 @@
  */
 import type { HostClient } from '@openchamber/sdk';
 import { applyHostReady } from '@openchamber/sdk/ui';
-import { buildView, type ViewRow } from './view-model.ts';
-import type { ProvidersResponse, UsageResponse } from '../shared/wire.ts';
+import { buildView, unconfirmedLines, type ViewRow } from './view-model.ts';
+import type { ProvidersResponse, UnconfirmedRef, UsageResponse } from '../shared/wire.ts';
 
 export type GuestHost = Pick<
   HostClient,
@@ -94,7 +94,7 @@ export function start(host: GuestHost, root: HTMLElement): void {
       const providers = JSON.parse((await request('/providers', undefined, target)).body) as ProvidersResponse;
       if (mine !== generation) return;
       if (!providers.default) {
-        showNoProvider();
+        showNoProvider(providers.rejected ?? []);
         paintedDirectory = target;
         return;
       }
@@ -143,12 +143,13 @@ export function start(host: GuestHost, root: HTMLElement): void {
     setHeight(48);
   }
 
-  function showNoProvider(): void {
-    root.replaceChildren(
-      line('llu-line', 'No LiteLLM provider found'),
-      line('llu-hint', 'Add a LiteLLM provider to OpenCode’s config, then reopen this section.'),
-    );
-    setHeight(64);
+  function showNoProvider(rejected: UnconfirmedRef[]): void {
+    const notes = unconfirmedLines(rejected);
+    const nodes: Node[] = [line('llu-line', 'No LiteLLM provider found')];
+    for (const note of notes) nodes.push(line('llu-hint', note));
+    nodes.push(line('llu-hint', 'Add a LiteLLM provider to OpenCode’s config, then reopen this section.'));
+    root.replaceChildren(...nodes);
+    setHeight(notes.length > 0 ? 64 + notes.length * 16 : 64);
   }
 
   function showUsage(usage: UsageResponse): void {
