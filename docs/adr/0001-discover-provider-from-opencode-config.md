@@ -1,8 +1,9 @@
 # 1. Discover the provider from OpenCode's config, not a credential form
 
-- **Status**: Accepted — partially implemented (see note). The source list and
+- **Status**: Accepted — implemented. The recognition rule, source list and
   precedence below are corrected by
-  [ADR-0003](0003-probe-gated-discovery.md).
+  [ADR-0003](0003-probe-gated-discovery.md); the selector surface is settled by
+  [ADR-0004](0004-narrow-to-one-key-and-key-budget-windows.md).
 - **Date**: 2026-10-09
 - **Ticket**: [#2](https://github.com/oroszgy/openchamber-litellm-usage/issues/2)
 - **Map**: [#1](https://github.com/oroszgy/openchamber-litellm-usage/issues/1)
@@ -48,16 +49,18 @@ entry's `options.apiKey`, falling back to OpenCode's credential store
 `~/.local/share/opencode/`). The **management root** is the base URL with a
 trailing `/v1` stripped.
 
-A candidate is LiteLLM when its id or display name contains `litellm`
-(case-insensitive), **confirmed by a self-scoped `GET /key/info` probe** with
-its key. The chosen provider id lives in `host.storage` (instance scope) and is
-sent to the service on every request together with `ctx.directory`, so the
-service can read project-level config. Default when unset: the candidate with
-the least edit distance to the string `litellm`. When nothing matches, the
-section shows a one-line static hint pointing at the OpenCode provider config.
+A candidate is **confirmed by a self-scoped `GET /key/info` probe** with its key;
+its name only ranks the default (corrected by
+[ADR-0003](0003-probe-gated-discovery.md)). The chosen provider id lives in
+`host.storage` (instance scope) and is sent to the service on every request
+together with `ctx.directory`, so the service can read project-level config.
+Default when unset: the candidate with the least edit distance to the string
+`litellm`. When nothing matches, the section shows a short hint pointing at the
+OpenCode provider config.
 
-The service re-reads a source when its file mtime changes. Any bearer key is
-accepted; a LiteLLM **virtual key** (which can read only itself) is intended.
+The service re-reads the sources on every discovery; only the probe outcome is
+cached, for 60 seconds. Any bearer key is accepted; a LiteLLM **virtual key**
+(which can read only itself) is intended.
 
 ## Consequences
 
@@ -73,21 +76,19 @@ accepted; a LiteLLM **virtual key** (which can read only itself) is intended.
   candidate rather than surfacing a partial one.
 - Offering a proxy that OpenCode is not configured for requires adding it to
   OpenCode's config first.
-- The always-visible provider selector is the only user choice; its surface
-  (header control + in-panel fallback) is the Layout decision
-  ([#7](https://github.com/oroszgy/openchamber-litellm-usage/issues/7)).
+- The provider selector is the only user choice. It is a host-rendered header
+  select, shown when more than one target is confirmed and hidden when there is
+  one; there is no in-panel fallback. See
+  [ADR-0004](0004-narrow-to-one-key-and-key-budget-windows.md).
 
-## Implementation note (2026-10-12)
+## Implementation note (2026-10-29)
 
-Two parts of this decision are not built yet, and the shipped behaviour differs:
+The decision is implemented:
 
-- **The `/key/info` probe runs at read time, not at discovery.** `GET /providers`
-  is a deliberately static list (spec
-  [#12](https://github.com/oroszgy/openchamber-litellm-usage/issues/12) §6); a
-  candidate is confirmed only when `/usage` calls its `/key/info`. A proxy that
-  answers `/key/info` badly is therefore offered by `/providers` and then fails
-  as `unsupported_proxy` on `/usage`, rather than being hidden.
-- **The selector is not implemented.** The section uses the nearest-`litellm`
-  default on every load and does not persist a chosen id in `host.storage`; its
-  surface is still the Layout decision
-  ([#7](https://github.com/oroszgy/openchamber-litellm-usage/issues/7)).
+- The `/key/info` probe runs at discovery, so `GET /providers` returns confirmed
+  targets only ([ADR-0003](0003-probe-gated-discovery.md)).
+- The picker is a `setStatusControls` select beside the section title, persisted
+  in `host.storage` under `litellm-usage:provider`. A stored id that no longer
+  resolves falls back to the nearest-`litellm` default. On a host that does not
+  advertise `features.statusControls`, the picker is hidden and the default is
+  used.
