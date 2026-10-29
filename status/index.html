@@ -30,7 +30,9 @@
         gap: 8px;
         height: 28px;
         padding: 0 4px;
+        border-radius: 6px;
         color: var(--oc-muted);
+        text-align: start;
       }
       .llu-label {
         flex: 1 1 auto;
@@ -46,11 +48,12 @@
         flex: 0 0 auto;
         font-variant-numeric: tabular-nums;
       }
+      /* The same status tokens the native Work Status values use. */
       .llu-value[data-tone='warning'] {
-        color: var(--oc-warning-text, #b45309);
+        color: var(--status-warning, var(--oc-warning, #b45309));
       }
       .llu-value[data-tone='error'] {
-        color: var(--oc-error-text, #d9534f);
+        color: var(--status-error, var(--oc-error, #d9534f));
       }
       .llu-line,
       .llu-hint,
@@ -70,7 +73,7 @@
         color: var(--oc-muted);
       }
       .llu-error {
-        color: var(--oc-error-text, #d9534f);
+        color: var(--status-error, var(--oc-error, #d9534f));
       }
       .llu-retry {
         display: flex;
