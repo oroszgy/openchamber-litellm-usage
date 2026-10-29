@@ -69,7 +69,8 @@ gets the section working with no new input.
   LiteLLM proxy. The name is not trusted: a provider typo'd as `litelm` is still
   found. Unconfirmed candidates stay out of the section; the service logs why.
 - With several confirmed candidates, pick one in the select beside the section
-  title. With one, it is used directly. With none, the section points at
+  title (on a host that advertises header controls; older hosts use the
+  default). With one, it is used directly. With none, the section points at
   OpenCode's provider config.
 
 A virtual key reads only itself, which is all this extension needs; no master key
