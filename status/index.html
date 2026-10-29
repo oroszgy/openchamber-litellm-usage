@@ -24,12 +24,14 @@
       .llu-retry {
         margin: 0;
       }
+      /* The host already wraps this frame in `mx-1`; a row needs no second
+         inset to line up with the native Work Status rows and header. */
       .llu-row {
         display: flex;
         align-items: center;
         gap: 8px;
         height: 28px;
-        padding: 0 4px;
+        padding: 0;
         border-radius: 6px;
         color: var(--oc-muted);
         text-align: start;
@@ -60,7 +62,7 @@
       .llu-error {
         display: block;
         height: 28px;
-        padding: 0 4px;
+        padding: 0;
         line-height: 28px;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -79,7 +81,7 @@
         display: flex;
         align-items: center;
         height: 28px;
-        padding: 0 4px;
+        padding: 0;
         border: none;
         background: none;
         font: inherit;
