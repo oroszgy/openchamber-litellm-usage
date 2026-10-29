@@ -1,7 +1,8 @@
 # 2. Feature-detect LiteLLM capabilities, never gate on version
 
-- **Status**: Accepted — partially implemented (see note). The "no shape gate at
-  config discovery" consequence is superseded by
+- **Status**: Accepted — implemented with the narrow field set in
+  [ADR-0004](0004-narrow-to-one-key-and-key-budget-windows.md). The "no shape gate
+  at config discovery" consequence is superseded by
   [ADR-0003](0003-probe-gated-discovery.md).
 - **Date**: 2026-10-09
 - **Ticket**: [#8](https://github.com/oroszgy/openchamber-litellm-usage/issues/8)
@@ -79,3 +80,18 @@ fields in the table above (`max_budget`, `budget_reset_at`,
 `litellm_budget_table.soft_budget`, `budget_limits`) and the team lookup are
 prospective — they belong to the budget phase
 ([#12](https://github.com/oroszgy/openchamber-litellm-usage/issues/12)).
+
+## Amendment (2026-10-29)
+
+The narrow scope ([ADR-0004](0004-narrow-to-one-key-and-key-budget-windows.md))
+keeps the feature-detection rule but narrows the field set:
+
+- **Required**: `info.spend`.
+- **Read**: `info.max_budget`, `info.budget_duration`, `info.budget_limits`,
+  `info.budget_limits_usage` and `info.user_id`.
+- **No longer read**: `info.budget_reset_at`,
+  `info.litellm_budget_table.soft_budget`, `info.team_id`, and `/team/info`.
+- A missing `budget_limits_usage` hides that window; the rest still render.
+- Rolling being unavailable is `200` + `notice`, not `degraded[]`.
+- A failing `/key/info` probe makes the candidate unconfirmed; it is not
+  returned by `/providers` ([ADR-0003](0003-probe-gated-discovery.md)).

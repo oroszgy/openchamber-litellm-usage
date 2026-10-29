@@ -6,25 +6,28 @@ Status** panel — the same panel that lists Context, Project, Usage, Turn stats
 MCP and other sections. One section, no rail panel, no toolbar icon.
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/images/work-status-dark.png">
-  <img src="docs/images/work-status-light.png" alt="The OpenChamber Work Status panel with the LiteLLM Usage section, showing rolling spend for today, the last 7 days and the last 30 days and the lifetime spend." width="340">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/litellm-usage-dark.png">
+  <img src="docs/images/litellm-usage-light.png" alt="The LiteLLM Usage section in the Work Status panel, showing today, the last 7 days and the last 30 days." width="340">
 </picture>
 
 ## Features
 
 - **Rolling spend** — today, the last 7 days and the last 30 days, each totalled
-  over your local calendar days, always visible.
-- **Spend behind a toggle** — the key's spend figure is hidden until you ask for
-  it, and the choice is remembered per server. It reads **Lifetime spend** on an
-  unbudgeted key, **Spend** when the key has a budget window.
+  over your local calendar days.
+- **Quota usage** — when the key has its own budget windows, each matching row
+  also shows the percentage used and the window's spend and cap, e.g.
+  `Today  $8.40 of $10.00  84%`. The 50% / 80% tone matches OpenChamber's own
+  Usage section.
+- **Pick your proxy** — when more than one LiteLLM target is discovered, a
+  select beside the section title chooses the one to monitor. The choice is
+  remembered.
 - **Zero configuration** — the proxy's URL and key are read from the OpenCode
   provider you already use, so there is nothing to paste.
 - **Read-only** — the extension only ever reads; it never writes to LiteLLM.
 
-> **Not yet shown.** The design in
-> [#12](https://github.com/oroszgy/openchamber-litellm-usage/issues/12) adds
-> per-budget **remaining** figures and reset windows (key, member and team).
-> This release shows spend only.
+> **Key windows only.** The section shows the key's own daily/weekly/monthly
+> budget windows. Team and member budgets, remaining budget, reset dates, soft
+> budgets and per-model or TPM/RPM limits are not shown.
 
 ## Install
 
@@ -39,7 +42,7 @@ https://github.com/oroszgy/openchamber-litellm-usage
 Approve the extension and **allow its local service**. A **LiteLLM Usage**
 section then joins Work Status. Installed from a git URL, the extension updates
 itself: when the version bumps, the card offers **Update**. Add a release tag to
-the URL to pin one, for example `#v0.2.0`.
+the URL to pin one, for example `#v0.4.0`.
 
 The built bundles (`status/main.js`, `service/main.js`) ship in the repository,
 because OpenChamber never compiles an extension. To run a checkout instead, build
@@ -63,14 +66,29 @@ gets the section working with no new input.
   resolved — falling back to OpenCode's credential store
   `~/.local/share/opencode/auth.json`.
 - A candidate is used only if a **probe** (`GET /key/info`) confirms it is a
-  LiteLLM proxy. So the name is not trusted: a provider typo'd as `litelm` is
-  still found. Candidates the probe rejects are listed with the reason.
-- With several confirmed candidates, the one nearest the string `litellm` is
-  used. When none is confirmed, the section names each candidate and why it was
-  not confirmed.
+  LiteLLM proxy. The name is not trusted: a provider typo'd as `litelm` is still
+  found. Unconfirmed candidates stay out of the section; the service logs why.
+- With several confirmed candidates, pick one in the select beside the section
+  title (on a host that advertises header controls; older hosts use the
+  default). With one, it is used directly. With none, the section points at
+  OpenCode's provider config.
 
 A virtual key reads only itself, which is all this extension needs; no master key
 is involved.
+
+## How spend is read
+
+- **Rolling spend** comes from `GET /user/daily/activity`, bucketed in the
+  service over local calendar days. The endpoint pages at roughly 15 days and
+  can split one day across pages, so the service reads every page and sums the
+  buckets by date.
+- **Quota usage** comes from the key's own `GET /key/info`: the legacy
+  `max_budget` + `budget_duration` window, and the multi-window `budget_limits`
+  paired with `budget_limits_usage`. `24h`/`1d` maps to today, `7d` to the last
+  7 days, `30d`/`1mo` to the last 30 days. A `max_budget` with no duration is a
+  separate `Total` row. Other durations, such as 5 hours, are not shown.
+- The key's `total_spend` is never read: LiteLLM does not backfill it, and it
+  can disagree with the key's own `spend`.
 
 ## Security
 
@@ -87,12 +105,16 @@ is involved.
 
 ## Limitations
 
-- **Spend only.** Remaining budget and reset windows are not shown yet; that is
-  the [budget design](https://github.com/oroszgy/openchamber-litellm-usage/issues/12).
-- **One proxy, chosen for you.** The candidate nearest `litellm` is used; a
-  provider selector is not built yet.
+- **Key windows only.** A key governed by a team or member budget shows its own
+  spend and windows, but not the binding team/member quota.
+- **One key at a time.** The picker chooses one proxy; it does not aggregate
+  several.
+- **No reset dates or remaining budget.** The section shows spend and used
+  percentage, not when a window resets or how much is left.
 - **Read on demand.** The section reads when it is shown and expanded, and
-  refreshes in place when the session changes; it does not poll on a timer.
+  refreshes when the session or project changes; it does not poll on a timer and
+  has no manual refresh button.
+- **No history.** Only today, the last 7 days and the last 30 days are shown.
 
 ## Development
 

@@ -27,6 +27,7 @@ type Fake = {
   setInfo: (info: Record<string, unknown>) => void;
   setActivity: (activity: Record<string, unknown>) => void;
   setActivityStatus: (status: number) => void;
+  setActivityPage: (page: (page: number) => Record<string, unknown>) => void;
 };
 
 async function fakeLitellm(seed?: {
@@ -39,6 +40,7 @@ async function fakeLitellm(seed?: {
   let info = seed?.info ?? { spend: 1536.61, user_id: 'u1' };
   let activity = seed?.activity ?? { results: [] };
   let activityStatus = seed?.activityStatus ?? 200;
+  let activityPage: ((page: number) => Record<string, unknown>) | null = null;
 
   const server = createServer((req, res) => {
     calls.push(req.url ?? '');
@@ -49,7 +51,10 @@ async function fakeLitellm(seed?: {
       res.end(JSON.stringify(body));
     };
     if (url.pathname === '/key/info') return send({ key: 'sk-test', info });
-    if (url.pathname === '/user/daily/activity') return send(activity, activityStatus);
+    if (url.pathname === '/user/daily/activity') {
+      if (activityPage) return send(activityPage(Number(url.searchParams.get('page') ?? '1')), activityStatus);
+      return send(activity, activityStatus);
+    }
     return send({ error: 'not found' }, 404);
   });
   const url = await listen(server);
@@ -66,6 +71,9 @@ async function fakeLitellm(seed?: {
     },
     setActivityStatus: (next) => {
       activityStatus = next;
+    },
+    setActivityPage: (next) => {
+      activityPage = next;
     },
   };
 }
@@ -107,6 +115,12 @@ function opencodeConfig(baseURL: string, id = 'litellm', name = 'LiteLLM'): stri
   });
 }
 
+type Usage = {
+  rolling?: { day: number; week: number; month: number };
+  budgets?: Record<string, { cap: number; spend: number }>;
+  notice?: string;
+};
+
 test('health is pure liveness and requires the bearer', async () => {
   const fake = await fakeLitellm();
   const h = await service(fake, { '/proj/opencode.json': opencodeConfig(fake.url) });
@@ -122,7 +136,7 @@ test('health is pure liveness and requires the bearer', async () => {
   expect(h.reads).toHaveLength(0);
 });
 
-test('providers lists candidates by management root and never leaks the key', async () => {
+test('providers lists confirmed targets without the host or key', async () => {
   const fake = await fakeLitellm();
   const h = await service(fake, { '/proj/opencode.json': opencodeConfig(fake.url) });
 
@@ -131,14 +145,14 @@ test('providers lists candidates by management root and never leaks the key', as
   const body = (await res.json()) as { providers: unknown[]; default: string; rejected?: unknown };
 
   expect(body.default).toBe('litellm');
-  expect(body.providers).toEqual([{ id: 'litellm', name: 'LiteLLM', host: fake.url }]);
+  expect(body.providers).toEqual([{ id: 'litellm', name: 'LiteLLM' }]);
   expect(body.rejected).toBeUndefined();
   expect(JSON.stringify(body)).not.toContain('sk-test');
-  // The one probe, and no LiteLLM read beyond it.
+  expect(JSON.stringify(body)).not.toContain(fake.url);
   expect(fake.calls.filter((call) => call === '/key/info')).toHaveLength(1);
 });
 
-test('usage reads spend and buckets rolling windows', async () => {
+test('usage buckets the rolling windows and keeps the activity query', async () => {
   const fake = await fakeLitellm({
     info: { spend: 1536.61, user_id: 'u1' },
     activity: {
@@ -155,34 +169,141 @@ test('usage reads spend and buckets rolling windows', async () => {
 
   const res = await fetch(`${h.url}/usage?provider=litellm&directory=/proj`, { headers: auth() });
   expect(res.status).toBe(200);
-  const body = (await res.json()) as {
-    provider: unknown;
-    asOf: string;
-    spend: number;
-    spendKind: string;
-    rolling: { day: number; week: number; month: number };
-  };
+  const body = (await res.json()) as Usage;
 
-  expect(body.provider).toEqual({ id: 'litellm', name: 'LiteLLM', host: fake.url });
-  expect(body.asOf).toBe('2026-10-09T12:00:00.000Z');
-  expect(body.spend).toBe(1536.61);
-  expect(body.spendKind).toBe('lifetime');
-  expect(body.rolling.day).toBeCloseTo(1.2);
-  expect(body.rolling.week).toBeCloseTo(2.7);
-  expect(body.rolling.month).toBeCloseTo(5.7);
+  expect(body.rolling?.day).toBeCloseTo(1.2);
+  expect(body.rolling?.week).toBeCloseTo(2.7);
+  expect(body.rolling?.month).toBeCloseTo(5.7);
+  expect(body.budgets).toBeUndefined();
+  expect(body.notice).toBeUndefined();
 
   const hash = createHash('sha256').update('sk-test').digest('hex');
   const activityIndex = fake.calls.findIndex((call) => call.startsWith('/user/daily/activity'));
-  const activity = fake.calls[activityIndex];
+  const activity = fake.calls[activityIndex]!;
   expect(activity).toContain(`api_key=${hash}`);
   expect(activity).toContain('start_date=');
   expect(activity).toContain('end_date=2026-10-09');
   expect(activity).toContain('include_current_utc_day=true');
   expect(activity).toContain('timezone=0');
+  expect(activity).toContain('page=1');
   expect(fake.auth[activityIndex]).toBe('Bearer sk-test');
 });
 
-test('a key with no readable spend is not confirmed, and says why', async () => {
+test('activity pages are read to the end and a day split across them is summed', async () => {
+  const fake = await fakeLitellm({
+    info: { spend: 0, user_id: 'u1' },
+    activity: { results: [], metadata: { has_more: false } },
+  });
+  // The live endpoint can return part of a day on each page; both parts count.
+  const pages: Record<number, Record<string, unknown>> = {
+    1: {
+      results: [
+        { date: '2026-10-09', metrics: { spend: 1.2 } },
+        { date: '2026-10-08', metrics: { spend: 0.4 } },
+      ],
+      metadata: { has_more: true },
+    },
+    2: {
+      results: [
+        { date: '2026-10-08', metrics: { spend: 0.6 } },
+        { date: '2026-09-20', metrics: { spend: 3.0 } },
+      ],
+      metadata: { has_more: false },
+    },
+  };
+  fake.setActivityPage((page) => pages[page] ?? { results: [], metadata: { has_more: false } });
+  const h = await service(fake, { '/proj/opencode.json': opencodeConfig(fake.url) });
+
+  const res = await fetch(`${h.url}/usage?provider=litellm&directory=/proj`, { headers: auth() });
+  const body = (await res.json()) as Usage;
+
+  expect(body.rolling?.day).toBeCloseTo(1.2);
+  expect(body.rolling?.week).toBeCloseTo(2.2);
+  expect(body.rolling?.month).toBeCloseTo(5.2);
+  expect(fake.calls.filter((call) => call.startsWith('/user/daily/activity'))).toHaveLength(2);
+});
+
+test('a legacy max_budget + budget_duration maps to its period', async () => {
+  const fake = await fakeLitellm({
+    info: { spend: 8.4, user_id: 'u1', max_budget: 10, budget_duration: '24h' },
+  });
+  const h = await service(fake, { '/proj/opencode.json': opencodeConfig(fake.url) });
+
+  const res = await fetch(`${h.url}/usage?provider=litellm&directory=/proj`, { headers: auth() });
+  const body = (await res.json()) as Usage;
+  expect(body.budgets).toEqual({ day: { cap: 10, spend: 8.4 } });
+});
+
+test('budget_limits pairs each window with its usage', async () => {
+  const fake = await fakeLitellm({
+    info: {
+      spend: 0,
+      user_id: 'u1',
+      budget_limits: [
+        { budget_duration: '24h', max_budget: 10 },
+        { budget_duration: '30d', max_budget: 100 },
+        { budget_duration: '5h', max_budget: 2 },
+      ],
+      budget_limits_usage: {
+        '24h': { current_spend: 8.4 },
+        '30d': { current_spend: 21 },
+        '5h': { current_spend: 1 },
+      },
+    },
+  });
+  const h = await service(fake, { '/proj/opencode.json': opencodeConfig(fake.url) });
+
+  const res = await fetch(`${h.url}/usage?provider=litellm&directory=/proj`, { headers: auth() });
+  const body = (await res.json()) as Usage;
+  expect(body.budgets).toEqual({
+    day: { cap: 10, spend: 8.4 },
+    month: { cap: 100, spend: 21 },
+  });
+});
+
+test('the tighter window wins when two forms cover the same period', async () => {
+  const fake = await fakeLitellm({
+    info: {
+      spend: 8.4,
+      user_id: 'u1',
+      max_budget: 10,
+      budget_duration: '24h',
+      budget_limits: [{ budget_duration: '24h', max_budget: 20 }],
+      budget_limits_usage: { '24h': { current_spend: 10 } },
+    },
+  });
+  const h = await service(fake, { '/proj/opencode.json': opencodeConfig(fake.url) });
+
+  const res = await fetch(`${h.url}/usage?provider=litellm&directory=/proj`, { headers: auth() });
+  const body = (await res.json()) as Usage;
+  expect(body.budgets).toEqual({ day: { cap: 10, spend: 8.4 } });
+});
+
+test('a max_budget without a duration is a total window', async () => {
+  const fake = await fakeLitellm({ info: { spend: 42, user_id: 'u1', max_budget: 100 } });
+  const h = await service(fake, { '/proj/opencode.json': opencodeConfig(fake.url) });
+
+  const res = await fetch(`${h.url}/usage?provider=litellm&directory=/proj`, { headers: auth() });
+  const body = (await res.json()) as Usage;
+  expect(body.budgets).toEqual({ total: { cap: 100, spend: 42 } });
+});
+
+test('a multi-window without reported usage is not shown', async () => {
+  const fake = await fakeLitellm({
+    info: {
+      spend: 0,
+      user_id: 'u1',
+      budget_limits: [{ budget_duration: '30d', max_budget: 100 }],
+    },
+  });
+  const h = await service(fake, { '/proj/opencode.json': opencodeConfig(fake.url) });
+
+  const res = await fetch(`${h.url}/usage?provider=litellm&directory=/proj`, { headers: auth() });
+  const body = (await res.json()) as Usage;
+  expect(body.budgets).toBeUndefined();
+});
+
+test('a key with no readable spend is not confirmed; /providers is empty', async () => {
   const fake = await fakeLitellm({ info: {} });
   const h = await service(fake, { '/proj/opencode.json': opencodeConfig(fake.url) });
 
@@ -191,11 +312,11 @@ test('a key with no readable spend is not confirmed, and says why', async () => 
   const listed = (await providers.json()) as {
     providers: unknown[];
     default: string | null;
-    rejected?: Array<{ id: string; name: string; host: string; code: string }>;
+    rejected?: unknown;
   };
   expect(listed.providers).toEqual([]);
   expect(listed.default).toBeNull();
-  expect(listed.rejected).toEqual([{ id: 'litellm', name: 'LiteLLM', host: fake.url, code: 'unsupported_proxy' }]);
+  expect(listed.rejected).toBeUndefined();
 
   const res = await fetch(`${h.url}/usage?provider=litellm&directory=/proj`, { headers: auth() });
   expect(res.status).toBe(404);
@@ -220,14 +341,9 @@ test('a failed activity call degrades rolling without failing the read', async (
 
   const res = await fetch(`${h.url}/usage?provider=litellm&directory=/proj`, { headers: auth() });
   expect(res.status).toBe(200);
-  const body = (await res.json()) as {
-    spend: number;
-    rolling?: unknown;
-    degraded?: Array<{ figure: string; code: string }>;
-  };
-  expect(body.spend).toBe(5);
+  const body = (await res.json()) as Usage;
   expect(body.rolling).toBeUndefined();
-  expect(body.degraded?.[0]?.code).toBe('rolling_unavailable');
+  expect(body.notice).toBe('Rolling spend is unavailable for this key.');
 });
 
 test('a key without a user_id degrades rolling without calling activity', async () => {
@@ -236,24 +352,10 @@ test('a key without a user_id degrades rolling without calling activity', async 
 
   const res = await fetch(`${h.url}/usage?provider=litellm&directory=/proj`, { headers: auth() });
   expect(res.status).toBe(200);
-  const body = (await res.json()) as {
-    rolling?: unknown;
-    degraded?: Array<{ code: string }>;
-  };
+  const body = (await res.json()) as Usage;
   expect(body.rolling).toBeUndefined();
-  expect(body.degraded?.[0]?.code).toBe('rolling_unavailable');
+  expect(body.notice).toBe('Rolling spend is unavailable for this key.');
   expect(fake.calls.some((call) => call.startsWith('/user/daily/activity'))).toBe(false);
-});
-
-test('a key with a budget_duration reports a windowed spend', async () => {
-  const fake = await fakeLitellm({ info: { spend: 12.5, user_id: 'u1', budget_duration: '30d' } });
-  const h = await service(fake, { '/proj/opencode.json': opencodeConfig(fake.url) });
-
-  const res = await fetch(`${h.url}/usage?provider=litellm&directory=/proj`, { headers: auth() });
-  expect(res.status).toBe(200);
-  const body = (await res.json()) as { spend: number; spendKind: string };
-  expect(body.spend).toBe(12.5);
-  expect(body.spendKind).toBe('window');
 });
 
 test('an unreadable config is a fatal config_read_error, not "no provider"', async () => {
@@ -293,10 +395,10 @@ test("a typo'd provider name is still found, because the probe recognizes it", a
   const res = await fetch(`${h.url}/providers?directory=/proj`, { headers: auth() });
   const body = (await res.json()) as { providers: unknown[]; default: string };
   expect(body.default).toBe('litelm');
-  expect(body.providers).toEqual([{ id: 'litelm', name: 'Litelm', host: fake.url }]);
+  expect(body.providers).toEqual([{ id: 'litelm', name: 'Litelm' }]);
 });
 
-test('a candidate the probe rejects is reported, without its key', async () => {
+test('a candidate the probe rejects stays out of the list, without leaking its key or host', async () => {
   const fake = await fakeLitellm();
   const h = await service(fake, {
     '/proj/opencode.json': JSON.stringify({
@@ -308,13 +410,11 @@ test('a candidate the probe rejects is reported, without its key', async () => {
   });
 
   const res = await fetch(`${h.url}/providers?directory=/proj`, { headers: auth() });
-  const body = (await res.json()) as {
-    providers: Array<{ id: string }>;
-    rejected?: Array<{ id: string; name: string; host: string; code: string }>;
-  };
+  const body = (await res.json()) as { providers: Array<{ id: string }>; rejected?: unknown };
   expect(body.providers.map((provider) => provider.id)).toEqual(['litellm']);
-  expect(body.rejected).toEqual([{ id: 'other', name: 'Other proxy', host: 'http://127.0.0.1:1', code: 'provider_unreachable' }]);
+  expect(body.rejected).toBeUndefined();
   expect(JSON.stringify(body)).not.toContain('sk-other');
+  expect(JSON.stringify(body)).not.toContain('127.0.0.1:1');
 });
 
 test('a provider added to .opencode/opencode.json is found', async () => {

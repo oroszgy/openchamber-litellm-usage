@@ -210,48 +210,128 @@ async function readKeyInfo(fetchImpl, target, timeoutMs = PROBE_TIMEOUT_MS) {
     return { ok: false, code: "unsupported_proxy" };
   }
   const info = body?.info;
-  if (!info || typeof info.spend !== "number")
+  const spend = numberAt(info, "spend");
+  if (!info || spend === undefined)
     return { ok: false, code: "unsupported_proxy" };
   const userId = typeof info.user_id === "string" ? info.user_id : undefined;
-  const budgetDuration = info.budget_duration;
-  const windowed = typeof budgetDuration === "string" && budgetDuration.length > 0;
-  return { ok: true, spend: info.spend, spendKind: windowed ? "window" : "lifetime", userId };
+  const budgets = readBudgets(info, spend);
+  return {
+    ok: true,
+    spend,
+    ...userId !== undefined ? { userId } : {},
+    ...budgets !== undefined ? { budgets } : {}
+  };
+}
+function readBudgets(info, spend) {
+  const budgets = {};
+  const legacyCap = numberAt(info, "max_budget");
+  if (legacyCap !== undefined) {
+    const duration = typeof info.budget_duration === "string" ? info.budget_duration.trim() : "";
+    const period = duration.length > 0 ? periodFor(duration) : "total";
+    if (period)
+      keepTighter(budgets, period, { cap: legacyCap, spend });
+  }
+  const limits = info.budget_limits;
+  const usage = info.budget_limits_usage;
+  if (Array.isArray(limits) && usage !== null && typeof usage === "object") {
+    const byDuration = usage;
+    for (const entry of limits) {
+      if (entry === null || typeof entry !== "object")
+        continue;
+      const record = entry;
+      const rawDuration = typeof record.budget_duration === "string" ? record.budget_duration.trim() : "";
+      const cap = numberAt(record, "max_budget");
+      if (rawDuration.length === 0 || cap === undefined)
+        continue;
+      const period = periodFor(rawDuration);
+      if (!period)
+        continue;
+      const usageEntry = byDuration[rawDuration] ?? byDuration[rawDuration.toLowerCase()];
+      const windowSpend = numberAt(usageEntry, "current_spend");
+      if (windowSpend === undefined)
+        continue;
+      keepTighter(budgets, period, { cap, spend: windowSpend });
+    }
+  }
+  return Object.keys(budgets).length > 0 ? budgets : undefined;
+}
+function periodFor(duration) {
+  switch (duration.toLowerCase()) {
+    case "24h":
+    case "1d":
+    case "1day":
+      return "day";
+    case "7d":
+    case "1w":
+    case "1week":
+      return "week";
+    case "30d":
+    case "1mo":
+    case "1month":
+      return "month";
+    default:
+      return null;
+  }
+}
+function keepTighter(budgets, period, candidate) {
+  const current = budgets[period];
+  if (!current || ratio(candidate) > ratio(current))
+    budgets[period] = candidate;
+}
+function ratio(window) {
+  if (window.cap <= 0)
+    return window.spend > 0 ? Number.POSITIVE_INFINITY : 0;
+  return window.spend / window.cap;
 }
 async function readDailyActivity(fetchImpl, target, startDate, endDate, timezoneOffsetMinutes) {
-  const query = new URLSearchParams({
-    api_key: createHash("sha256").update(target.key).digest("hex"),
-    start_date: startDate,
-    end_date: endDate,
-    include_current_utc_day: "true",
-    timezone: String(timezoneOffsetMinutes)
-  });
-  let response;
-  try {
-    response = await fetchImpl(`${target.host}/user/daily/activity?${query.toString()}`, {
-      headers: { authorization: `Bearer ${target.key}` }
-    });
-  } catch {
-    return null;
-  }
-  if (!response.ok)
-    return null;
-  let body;
-  try {
-    body = await response.json();
-  } catch {
-    return null;
-  }
-  const results = body?.results;
-  if (!Array.isArray(results))
-    return null;
+  const apiKey = createHash("sha256").update(target.key).digest("hex");
   const buckets = [];
-  for (const result of results) {
-    const date = result.date;
-    const spend = result.metrics?.spend;
-    if (typeof date === "string" && typeof spend === "number")
-      buckets.push({ date, spend });
+  for (let page = 1;page <= 4; page += 1) {
+    const query = new URLSearchParams({
+      api_key: apiKey,
+      start_date: startDate,
+      end_date: endDate,
+      include_current_utc_day: "true",
+      timezone: String(timezoneOffsetMinutes),
+      page: String(page)
+    });
+    let response;
+    try {
+      response = await fetchImpl(`${target.host}/user/daily/activity?${query.toString()}`, {
+        headers: { authorization: `Bearer ${target.key}` }
+      });
+    } catch {
+      return null;
+    }
+    if (!response.ok)
+      return null;
+    let body;
+    try {
+      body = await response.json();
+    } catch {
+      return null;
+    }
+    const pageBody = body;
+    const results = pageBody?.results;
+    if (!Array.isArray(results))
+      return null;
+    for (const result of results) {
+      const date = result.date;
+      const spend = result.metrics?.spend;
+      if (typeof date === "string" && typeof spend === "number") {
+        buckets.push({ date, spend });
+      }
+    }
+    if (pageBody?.metadata?.has_more !== true)
+      break;
   }
   return buckets;
+}
+function numberAt(value, key) {
+  if (value === null || typeof value !== "object")
+    return;
+  const candidate = value[key];
+  return typeof candidate === "number" && Number.isFinite(candidate) ? candidate : undefined;
 }
 
 // service/discovery.ts
@@ -351,6 +431,7 @@ function round(value) {
 }
 
 // service/app.ts
+var ROLLING_UNAVAILABLE = "Rolling spend is unavailable for this key.";
 var error = (status, code, message) => ({
   status,
   body: { error: { code, message } }
@@ -392,13 +473,11 @@ async function handle(deps, discover, request) {
   return error(404, "not_found", "Not found.");
 }
 async function listProviders(discover, directory) {
-  const { confirmed, unconfirmed } = await discover(directory);
+  const { confirmed } = await discover(directory);
   const body = {
     providers: confirmed.map(publicTarget),
     default: defaultProviderId(confirmed.map((target) => target.id))
   };
-  if (unconfirmed.length > 0)
-    body.rejected = unconfirmed;
   return { status: 200, body };
 }
 async function usage(deps, discover, url) {
@@ -411,31 +490,23 @@ async function usage(deps, discover, url) {
   const now = deps.now();
   const timeZone = deps.env.timeZone ?? "UTC";
   const today = localDate(now, timeZone);
-  const body = {
-    provider: publicTarget(target),
-    asOf: now.toISOString(),
-    spend: target.info.spend,
-    spendKind: target.info.spendKind
-  };
-  const rollingDegraded = {
-    figure: "rolling",
-    code: "rolling_unavailable",
-    message: "Rolling spend is unavailable for this key."
-  };
+  const body = {};
+  if (target.info.budgets)
+    body.budgets = target.info.budgets;
   if (!target.info.userId) {
-    body.degraded = [rollingDegraded];
+    body.notice = ROLLING_UNAVAILABLE;
   } else {
     const buckets = await readDailyActivity(deps.fetch, target, shiftDate(today, -29), today, offsetMinutes(now, timeZone));
     if (buckets) {
       body.rolling = bucketRolling(buckets, today);
     } else {
-      body.degraded = [rollingDegraded];
+      body.notice = ROLLING_UNAVAILABLE;
     }
   }
   return { status: 200, body };
 }
 function publicTarget(target) {
-  return { id: target.id, name: target.name, host: target.host };
+  return { id: target.id, name: target.name };
 }
 function send(response, answer) {
   response.writeHead(answer.status, { "content-type": "application/json" });

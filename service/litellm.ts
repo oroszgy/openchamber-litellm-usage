@@ -1,5 +1,5 @@
 /**
- * The LiteLLM calls and their normalisation: the key's own spend from
+ * The LiteLLM calls and their normalisation: the key's own window from
  * `GET /key/info`, and the user's daily buckets from `GET /user/daily/activity`
  * for rolling day/week/month spend. Raw LiteLLM JSON never leaves this module.
  *
@@ -9,7 +9,7 @@
  */
 import { createHash } from 'node:crypto';
 import type { DailyBucket } from './dates.ts';
-import type { SpendKind } from '../shared/wire.ts';
+import type { BudgetPeriod, Budgets } from '../shared/wire.ts';
 
 export type KeyInfoFailure = 'unauthorized' | 'unsupported_proxy' | 'provider_unreachable' | 'upstream_error';
 
@@ -17,7 +17,7 @@ export type KeyInfoFailure = 'unauthorized' | 'unsupported_proxy' | 'provider_un
 export type Target = { host: string; key: string };
 
 export type KeyInfo =
-  | { ok: true; spend: number; spendKind: SpendKind; userId?: string | undefined }
+  | { ok: true; spend: number; userId?: string | undefined; budgets?: Budgets | undefined }
   | { ok: false; code: KeyInfoFailure };
 
 /**
@@ -53,12 +53,87 @@ export async function readKeyInfo(
   }
 
   const info = (body as { info?: Record<string, unknown> } | null)?.info;
-  if (!info || typeof info.spend !== 'number') return { ok: false, code: 'unsupported_proxy' };
+  const spend = numberAt(info, 'spend');
+  if (!info || spend === undefined) return { ok: false, code: 'unsupported_proxy' };
 
   const userId = typeof info.user_id === 'string' ? info.user_id : undefined;
-  const budgetDuration = info.budget_duration;
-  const windowed = typeof budgetDuration === 'string' && budgetDuration.length > 0;
-  return { ok: true, spend: info.spend, spendKind: windowed ? 'window' : 'lifetime', userId };
+  const budgets = readBudgets(info, spend);
+  return {
+    ok: true,
+    spend,
+    ...(userId !== undefined ? { userId } : {}),
+    ...(budgets !== undefined ? { budgets } : {}),
+  };
+}
+
+/**
+ * The key's own windows, mapped onto the section's three periods.
+ *
+ * `max_budget` + `budget_duration` is the legacy single window; `budget_limits`
+ * is the multi-window list, each paired with `budget_limits_usage`. A
+ * `max_budget` with no duration is a lifetime cap, shown as `total`. Other
+ * durations (5h, 12h, …) are ignored. When both forms cover one period, the
+ * tighter one wins.
+ */
+function readBudgets(info: Record<string, unknown>, spend: number): Budgets | undefined {
+  const budgets: Budgets = {};
+  const legacyCap = numberAt(info, 'max_budget');
+  if (legacyCap !== undefined) {
+    const duration = typeof info.budget_duration === 'string' ? info.budget_duration.trim() : '';
+    const period = duration.length > 0 ? periodFor(duration) : 'total';
+    if (period) keepTighter(budgets, period, { cap: legacyCap, spend });
+  }
+
+  const limits = info.budget_limits;
+  const usage = info.budget_limits_usage;
+  if (Array.isArray(limits) && usage !== null && typeof usage === 'object') {
+    const byDuration = usage as Record<string, unknown>;
+    for (const entry of limits) {
+      if (entry === null || typeof entry !== 'object') continue;
+      const record = entry as Record<string, unknown>;
+      const rawDuration = typeof record.budget_duration === 'string' ? record.budget_duration.trim() : '';
+      const cap = numberAt(record, 'max_budget');
+      if (rawDuration.length === 0 || cap === undefined) continue;
+      const period = periodFor(rawDuration);
+      if (!period) continue;
+      const usageEntry = byDuration[rawDuration] ?? byDuration[rawDuration.toLowerCase()];
+      const windowSpend = numberAt(usageEntry, 'current_spend');
+      if (windowSpend === undefined) continue;
+      keepTighter(budgets, period, { cap, spend: windowSpend });
+    }
+  }
+
+  return Object.keys(budgets).length > 0 ? budgets : undefined;
+}
+
+function periodFor(duration: string): BudgetPeriod | null {
+  switch (duration.toLowerCase()) {
+    case '24h':
+    case '1d':
+    case '1day':
+      return 'day';
+    case '7d':
+    case '1w':
+    case '1week':
+      return 'week';
+    case '30d':
+    case '1mo':
+    case '1month':
+      return 'month';
+    default:
+      return null;
+  }
+}
+
+/** Keep the window whose spend is the largest share of its cap. */
+function keepTighter(budgets: Budgets, period: BudgetPeriod, candidate: { cap: number; spend: number }): void {
+  const current = budgets[period];
+  if (!current || ratio(candidate) > ratio(current)) budgets[period] = candidate;
+}
+
+function ratio(window: { cap: number; spend: number }): number {
+  if (window.cap <= 0) return window.spend > 0 ? Number.POSITIVE_INFINITY : 0;
+  return window.spend / window.cap;
 }
 
 /** Returns the daily buckets, or `null` when the activity call can't be used. */
@@ -69,39 +144,59 @@ export async function readDailyActivity(
   endDate: string,
   timezoneOffsetMinutes: number,
 ): Promise<DailyBucket[] | null> {
-  const query = new URLSearchParams({
-    api_key: createHash('sha256').update(target.key).digest('hex'),
-    start_date: startDate,
-    end_date: endDate,
-    include_current_utc_day: 'true',
-    timezone: String(timezoneOffsetMinutes),
-  });
-
-  let response: Response;
-  try {
-    response = await fetchImpl(`${target.host}/user/daily/activity?${query.toString()}`, {
-      headers: { authorization: `Bearer ${target.key}` },
-    });
-  } catch {
-    return null;
-  }
-  if (!response.ok) return null;
-
-  let body: unknown;
-  try {
-    body = await response.json();
-  } catch {
-    return null;
-  }
-
-  const results = (body as { results?: unknown } | null)?.results;
-  if (!Array.isArray(results)) return null;
-
+  const apiKey = createHash('sha256').update(target.key).digest('hex');
   const buckets: DailyBucket[] = [];
-  for (const result of results) {
-    const date = (result as { date?: unknown }).date;
-    const spend = (result as { metrics?: { spend?: unknown } }).metrics?.spend;
-    if (typeof date === 'string' && typeof spend === 'number') buckets.push({ date, spend });
+
+  // The endpoint pages at roughly 15 days and can split one day across pages.
+  // Keep every bucket; `bucketRolling` sums them by date. 30 days needs two
+  // pages; the cap is a guard against a proxy that never clears `has_more`.
+  for (let page = 1; page <= 4; page += 1) {
+    const query = new URLSearchParams({
+      api_key: apiKey,
+      start_date: startDate,
+      end_date: endDate,
+      include_current_utc_day: 'true',
+      timezone: String(timezoneOffsetMinutes),
+      page: String(page),
+    });
+
+    let response: Response;
+    try {
+      response = await fetchImpl(`${target.host}/user/daily/activity?${query.toString()}`, {
+        headers: { authorization: `Bearer ${target.key}` },
+      });
+    } catch {
+      return null;
+    }
+    if (!response.ok) return null;
+
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      return null;
+    }
+
+    const pageBody = body as { results?: unknown; metadata?: { has_more?: unknown } } | null;
+    const results = pageBody?.results;
+    if (!Array.isArray(results)) return null;
+
+    for (const result of results) {
+      const date = (result as { date?: unknown }).date;
+      const spend = (result as { metrics?: { spend?: unknown } }).metrics?.spend;
+      if (typeof date === 'string' && typeof spend === 'number') {
+        buckets.push({ date, spend });
+      }
+    }
+
+    if (pageBody?.metadata?.has_more !== true) break;
   }
+
   return buckets;
+}
+
+function numberAt(value: unknown, key: string): number | undefined {
+  if (value === null || typeof value !== 'object') return undefined;
+  const candidate = (value as Record<string, unknown>)[key];
+  return typeof candidate === 'number' && Number.isFinite(candidate) ? candidate : undefined;
 }

@@ -1,29 +1,48 @@
 # LiteLLM Usage
 
-The OpenChamber extension that shows one configured LiteLLM virtual key's spend —
-lifetime and rolling — inside the chat's Work Status panel.
+The OpenChamber extension that shows one configured LiteLLM virtual key's spend
+inside the chat's Work Status panel: rolling day/week/month totals, and the
+key's own budget windows when it has them.
 
-Budget, remaining and reset-window vocabulary is not part of what ships yet; its
-design lives in the [architecture spec](https://github.com/oroszgy/openchamber-litellm-usage/issues/12).
+Team and member budgets, remaining budget, reset windows and soft budgets are
+not part of the extension. The narrow scope is recorded in
+[ADR-0004](docs/adr/0004-narrow-to-one-key-and-key-budget-windows.md).
 
 ## Language
 
 **Spend**:
-The amount spent within a budget's current window. Resets when the budget window
-resets. Shown as the section's spend figure when the key carries a
-`budget_duration`.
+The amount spent in a period or in a budget window's current cycle.
 _Avoid_: Usage, cost
-
-**Lifetime spend**:
-The total amount spent over the key's whole life; it never resets. Shown as the
-section's spend figure when the key has no `budget_duration`.
-_Avoid_: Total spend, total usage
 
 **Rolling spend window**:
 A trailing period — today, the last 7 days, the last 30 days, each a local
 calendar day — over which spend is totalled for display. Distinct from a budget
 window.
 _Avoid_: Activity, report
+
+**Budget window**:
+A time-boxed spend cap on a virtual key that resets on its own schedule. Only
+the key's own windows are shown.
+_Avoid_: Rate limit, quota window
+
+**Quota**:
+The cap amount of a budget window, in USD.
+_Avoid_: Limit, budget
+
+**Quota used**:
+The share of a budget window's quota spent in its current cycle, as a
+percentage.
+_Avoid_: Usage, burn
+
+**Lifetime cap**:
+A key's spend cap with no reset; a total, not a period. Shown as a separate
+total row.
+_Avoid_: Lifetime budget, total budget
+
+**Unbudgeted key**:
+A virtual key with neither a budget window nor a lifetime cap. Its section shows
+rolling spend only.
+_Avoid_: Unlimited key, no-limit key
 
 **Virtual key**:
 A LiteLLM-issued credential that identifies a caller and can read its own spend.
@@ -44,7 +63,8 @@ key used to read it.
 _Avoid_: Endpoint, upstream
 
 **Unconfirmed candidate**:
-A candidate the probe did not confirm; the probe's reason travels with it.
+A candidate the probe did not confirm. The service keeps it out of the section
+and logs the reason.
 _Avoid_: Rejected provider, failed provider
 
 **Management root**:

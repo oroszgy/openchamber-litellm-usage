@@ -1,6 +1,7 @@
 # 3. Probe-gated discovery: a candidate is a target only if `/key/info` confirms it
 
-- **Status**: Accepted
+- **Status**: Accepted — amended 2026-10-29 (confirmed targets only; see
+  [ADR-0004](0004-narrow-to-one-key-and-key-budget-windows.md)).
 - **Date**: 2026-10-16
 - **Supersedes**: ADR-0002's consequence *"no version or shape gate at config
   discovery"*; corrects the "static list" note in ADR-0001.
@@ -35,7 +36,7 @@ name similarity only ranks the default. Every candidate is probed at
 `GET <management-root>/key/info` in parallel — a 2 s deadline, and the outcome
 (success or failure) cached for 60 s per management root and key. A candidate
 whose probe returns the LiteLLM shape is a **target**; every other is an
-**unconfirmed candidate**, reported with the reason (`unauthorized`,
+**unconfirmed candidate**, logged with the reason (`unauthorized`,
 `unsupported_proxy`, `provider_unreachable`, `upstream_error`, `no_key`).
 
 Sources are read as OpenCode reads them: the global, project (root **and**
@@ -43,9 +44,9 @@ Sources are read as OpenCode reads them: the global, project (root **and**
 OpenCode's precedence. `options.apiKey` (or `settings.apiKey`) has its
 `{env:}`/`{file:}` references resolved, falling back to `auth.json`.
 
-`GET /providers` returns the targets, the default, and the unconfirmed
-candidates; `GET /usage` re-uses the probe's read instead of calling
-`/key/info` again.
+`GET /providers` returns the confirmed targets and the default, and no
+unconfirmed candidates (amended 2026-10-29); `GET /usage` re-uses the probe's
+read instead of calling `/key/info` again.
 
 ## Consequences
 
@@ -53,14 +54,22 @@ candidates; `GET /usage` re-uses the probe's read instead of calling
   longer hides it.
 - **Read-time precision moves to discovery.** `unauthorized`,
   `unsupported_proxy` and `provider_unreachable` no longer arise on `/usage`
-  (which only ever receives a confirmed id); they now name an unconfirmed
-  candidate. A proxy that is down reads as *"No LiteLLM provider found"* plus
-  the reason, not as a fatal `provider_unreachable`. This is the trade ADR-0002
-  argued against; it is taken deliberately, for typo tolerance.
+  (which only ever receives a confirmed id); they describe an unconfirmed
+  candidate in the service log. A proxy that is down reads as *"No LiteLLM
+  provider found"* plus a configuration hint, not as a fatal
+  `provider_unreachable`. This is the trade ADR-0002 argued against; it is taken
+  deliberately, for typo tolerance.
 - `/providers` is **no longer a static list**: it probes, so it can take up to
   the probe deadline on a cold cache.
-- Unconfirmed candidates are reported in full — id, name and **host** — so the
-  sandboxed guest learns the host of every configured candidate, not only the
-  LiteLLM-shaped ones. Keys are never returned.
-- A proxy that answers `/key/info` badly is hidden from the selector and shown
-  as unconfirmed rather than offered and failed at read time.
+- Unconfirmed candidates stay in the service. Their id, name and host are not
+  returned to the sandboxed guest, and their keys are never returned at all.
+- A proxy that answers `/key/info` badly is hidden from the selector rather than
+  offered and failed at read time.
+
+## Amendment (2026-10-29)
+
+The narrow scope in
+[ADR-0004](0004-narrow-to-one-key-and-key-budget-windows.md) drops the
+unconfirmed-candidate list from `GET /providers`. The probe still uses the
+reason internally and logs it; the section shows one hint when nothing is
+confirmed. This removes the host disclosure the original consequence accepted.

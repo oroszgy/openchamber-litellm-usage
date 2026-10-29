@@ -1,10 +1,12 @@
 /**
- * The Work Status section's wiring: ask the service for the candidate providers
+ * The Work Status section's wiring: ask the service for the confirmed providers
  * and the chosen one's usage, then render. Kept apart from `main.ts` so tests
  * can drive it with a stub host.
  *
- * Rolling spend is always shown; the key's spend figure sits behind a toggle
- * whose choice is remembered per server (`host.storage`).
+ * The section draws three rows — Today, Last 7 days, Last 30 days — with a key
+ * budget window's percentage where one matches. The provider picker is a
+ * host-rendered header select, shown only when more than one target is
+ * confirmed and remembered per server.
  *
  * The host re-pushes `ready` when the session or theme changes, and the SDK
  * replays it to `onReady` *and* `onDirectory`. A read already on screen is kept
@@ -13,21 +15,20 @@
  */
 import type { HostClient } from '@openchamber/sdk';
 import { applyHostReady } from '@openchamber/sdk/ui';
-import { buildView, unconfirmedLines, type ViewRow } from './view-model.ts';
-import type { ProvidersResponse, UnconfirmedRef, UsageResponse } from '../shared/wire.ts';
+import { buildView, type ViewRow } from './view-model.ts';
+import type { ProviderRef, ProvidersResponse, UsageResponse } from '../shared/wire.ts';
 
 export type GuestHost = Pick<
   HostClient,
-  'onReady' | 'onDirectory' | 'serviceRequest' | 'setHeight' | 'storage'
+  'onReady' | 'onDirectory' | 'serviceRequest' | 'setHeight' | 'storage' | 'onStatusControl' | 'setStatusControls'
 >;
 
-const SHOW_SPEND_KEY = 'litellm-usage:show-spend';
+const PROVIDER_KEY = 'litellm-usage:provider';
+const PROVIDER_CONTROL = 'litellm-provider';
 
 export function start(host: GuestHost, root: HTMLElement): void {
   let directory: string | null = null;
   let generation = 0;
-  let showSpend = false;
-  let current: UsageResponse | null = null;
   let started = false;
   /**
    * The directory whose outcome is painted on screen. A repeated `ready`
@@ -38,16 +39,26 @@ export function start(host: GuestHost, root: HTMLElement): void {
   let inFlight = false;
   let queued = false;
   let lastHeight = 0;
+  let features: { statusControls?: true } | undefined;
+  let knownProviders: ProviderRef[] = [];
+  let chosen: string | null = null;
+
+  host.onStatusControl((event) => {
+    if (event.id !== PROVIDER_CONTROL || typeof event.value !== 'string') return;
+    void chooseProvider(event.value);
+  });
 
   host.onReady((ctx) => {
     applyHostReady(ctx, document.documentElement);
     directory = ctx.directory;
+    // Keep the last advertised capabilities: a theme-only snapshot may omit them.
+    if (ctx.features) features = ctx.features;
     if (started) {
       requestRefresh();
       return;
     }
     started = true;
-    void begin();
+    requestRefresh();
   });
 
   host.onDirectory((next) => {
@@ -57,19 +68,6 @@ export function start(host: GuestHost, root: HTMLElement): void {
     directory = next;
     requestRefresh();
   });
-
-  async function begin(): Promise<void> {
-    await readPreference();
-    requestRefresh();
-  }
-
-  async function readPreference(): Promise<void> {
-    try {
-      showSpend = (await host.storage.get(SHOW_SPEND_KEY)) === true;
-    } catch {
-      showSpend = false;
-    }
-  }
 
   /**
    * Re-read unless one is already running; queue a single follow-up so a burst
@@ -93,13 +91,17 @@ export function start(host: GuestHost, root: HTMLElement): void {
     try {
       const providers = JSON.parse((await request('/providers', undefined, target)).body) as ProvidersResponse;
       if (mine !== generation) return;
-      if (!providers.default) {
-        showNoProvider(providers.rejected ?? []);
+      knownProviders = providers.providers;
+      chosen = await resolveProvider(providers);
+      await publishControls();
+      if (mine !== generation) return;
+      if (!chosen) {
+        showNoProvider();
         paintedDirectory = target;
         return;
       }
       const usage = JSON.parse(
-        (await request('/usage', { provider: providers.default }, target)).body,
+        (await request('/usage', { provider: chosen }, target)).body,
       ) as UsageResponse;
       if (mine !== generation) return;
       showUsage(usage);
@@ -116,6 +118,53 @@ export function start(host: GuestHost, root: HTMLElement): void {
         queued = false;
         void load();
       }
+    }
+  }
+
+  async function resolveProvider(providers: ProvidersResponse): Promise<string | null> {
+    const stored = await host.storage.get(PROVIDER_KEY).catch(() => undefined);
+    const storedId = typeof stored === 'string' ? stored : null;
+    if (storedId && providers.providers.some((provider) => provider.id === storedId)) return storedId;
+    if (providers.default && providers.providers.some((provider) => provider.id === providers.default)) {
+      return providers.default;
+    }
+    return providers.providers[0]?.id ?? null;
+  }
+
+  async function chooseProvider(id: string): Promise<void> {
+    if (id === chosen) return;
+    if (!knownProviders.some((provider) => provider.id === id)) return;
+    chosen = id;
+    // Invalidate a read already in flight for the previous choice.
+    generation += 1;
+    await host.storage.set(PROVIDER_KEY, id).catch(() => {
+      // A preference that cannot be saved is not a failure of the section.
+    });
+    await publishControls();
+    requestRefresh();
+  }
+
+  async function publishControls(): Promise<void> {
+    if (features?.statusControls !== true) return;
+    const controls =
+      knownProviders.length > 1 && chosen
+        ? [
+            {
+              kind: 'select' as const,
+              id: PROVIDER_CONTROL,
+              label: 'Provider',
+              value: chosen,
+              options: knownProviders.slice(0, 16).map((provider) => ({
+                value: provider.id,
+                label: (provider.name || provider.id).slice(0, 60),
+              })),
+            },
+          ]
+        : [];
+    try {
+      await host.setStatusControls(controls);
+    } catch {
+      // A host that does not accept controls keeps the default; not a failure.
     }
   }
 
@@ -140,46 +189,24 @@ export function start(host: GuestHost, root: HTMLElement): void {
 
   function showLoading(): void {
     root.replaceChildren(line('llu-hint', 'Loading LiteLLM usage…'));
-    setHeight(48);
+    setHeight(28);
   }
 
-  function showNoProvider(rejected: UnconfirmedRef[]): void {
-    const notes = unconfirmedLines(rejected);
-    const nodes: Node[] = [line('llu-line', 'No LiteLLM provider found')];
-    for (const note of notes) nodes.push(line('llu-hint', note));
-    nodes.push(line('llu-hint', 'Add a LiteLLM provider to OpenCode’s config, then reopen this section.'));
-    root.replaceChildren(...nodes);
-    setHeight(notes.length > 0 ? 64 + notes.length * 16 : 64);
+  function showNoProvider(): void {
+    root.replaceChildren(
+      line('llu-line', 'No LiteLLM provider found'),
+      line('llu-hint', 'Add a LiteLLM provider to OpenCode’s config.'),
+    );
+    setHeight(56);
   }
 
   function showUsage(usage: UsageResponse): void {
-    current = usage;
     const view = buildView(usage);
-    const nodes: Node[] = [];
-
-    if (view.rolling.length > 0) {
-      for (const row of view.rolling) nodes.push(rowLine(row));
-    } else if (view.degraded) {
-      nodes.push(line('llu-hint', view.degraded));
-    }
-
-    if (showSpend) nodes.push(rowLine({ label: view.spendLabel, value: view.spendValue }));
-
-    const label = showSpend ? 'Hide spend' : 'Show spend';
-    nodes.push(actionButton('llu-toggle', label, () => void toggleSpend()));
-
+    const nodes: Node[] = view.rows.map(rowLine);
+    if (view.notice) nodes.push(line('llu-hint', view.notice));
+    if (nodes.length === 0) nodes.push(line('llu-hint', 'No spend data.'));
     root.replaceChildren(...nodes);
-    setHeight(root.scrollHeight || 72);
-  }
-
-  async function toggleSpend(): Promise<void> {
-    showSpend = !showSpend;
-    if (current) showUsage(current);
-    try {
-      await host.storage.set(SHOW_SPEND_KEY, showSpend);
-    } catch {
-      // A preference that cannot be saved is not a failure of the section.
-    }
+    setHeight(Math.max(1, view.rows.length + (view.notice ? 1 : 0)) * 28);
   }
 
   function showError(cause: unknown): void {
@@ -187,7 +214,7 @@ export function start(host: GuestHost, root: HTMLElement): void {
       line('llu-error', cause instanceof Error ? cause.message : String(cause)),
       actionButton('llu-retry', 'Retry', () => retry()),
     );
-    setHeight(64);
+    setHeight(56);
   }
 
   /** Retry is a fresh start: blank to the loading line so it reads as work. */
@@ -227,9 +254,18 @@ function rowLine(row: ViewRow): HTMLParagraphElement {
   const item = document.createElement('p');
   item.className = 'llu-row';
   const label = document.createElement('span');
+  label.className = 'llu-label';
   label.textContent = row.label;
+  if (row.detail) {
+    const detail = document.createElement('span');
+    detail.className = 'llu-detail';
+    detail.textContent = ` ${row.detail}`;
+    label.append(detail);
+  }
   const value = document.createElement('span');
+  value.className = 'llu-value';
   value.textContent = row.value;
+  if (row.tone) value.dataset.tone = row.tone;
   item.append(label, value);
   return item;
 }

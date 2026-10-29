@@ -6,49 +6,35 @@
  * the import and nothing here reaches either runtime.
  */
 
-export type ProviderRef = { id: string; name: string; host: string };
-
-/** Why a candidate was not confirmed as a LiteLLM proxy. */
-export type UnconfirmedCode =
-  | 'unauthorized'
-  | 'unsupported_proxy'
-  | 'provider_unreachable'
-  | 'upstream_error'
-  | 'no_key';
-
-/** A candidate the probe did not confirm; the key is never returned. */
-export type UnconfirmedRef = { id: string; name: string; host: string; code: UnconfirmedCode };
+export type ProviderRef = { id: string; name: string };
 
 /**
- * `GET /providers`: the confirmed targets, the one to use when none is
- * requested, and the candidates that were found but not confirmed.
+ * `GET /providers`: the confirmed targets and the one to use when the user has
+ * not picked one. Unconfirmed candidates stay in the service.
  */
 export type ProvidersResponse = {
   providers: ProviderRef[];
   default: string | null;
-  /** Omitted when every candidate was confirmed. */
-  rejected?: UnconfirmedRef[];
 };
-
-/**
- * What `spend` is. LiteLLM reports a key's `info.spend` as the current budget
- * window's figure when it has a `budget_duration`, and as the never-resetting
- * total when it does not.
- */
-export type SpendKind = 'window' | 'lifetime';
 
 /** Today, the last 7 days and the last 30 days, each a local calendar day. */
 export type Rolling = { day: number; week: number; month: number };
 
-/** A figure the service could not read, with a code and a human message. */
-export type Degraded = { figure: string; code: string; message: string };
+/** A key's own budget window, mapped onto one of the section's periods. */
+export type BudgetPeriod = 'day' | 'week' | 'month' | 'total';
 
-/** `GET /usage`: everything the section renders, already normalised. */
+/** A cap and the spend against it in the window's current cycle. */
+export type Budget = { cap: number; spend: number };
+
+/** Only the periods the key actually has a window for. */
+export type Budgets = Partial<Record<BudgetPeriod, Budget>>;
+
+/**
+ * `GET /usage`: everything the section renders, already normalised. `rolling`
+ * is absent when the activity read is unavailable; `notice` then explains it.
+ */
 export type UsageResponse = {
-  provider: ProviderRef;
-  asOf: string;
-  spend: number;
-  spendKind: SpendKind;
   rolling?: Rolling;
-  degraded?: Degraded[];
+  budgets?: Budgets;
+  notice?: string;
 };
