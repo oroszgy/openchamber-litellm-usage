@@ -30,7 +30,7 @@ rows, and the target does not use them.
 The section reads **one virtual key on one proxy** and shows:
 
 - **Rolling spend** — today, the last 7 days and the last 30 days, from
-  `/user/daily/activity`, paginated and deduplicated by date.
+  `/user/daily/activity`, paginated and summed by date.
 - **Key budget windows** — the key's own `max_budget` + `budget_duration` and
   each `budget_limits` entry, paired with
   `budget_limits_usage[duration].current_spend`. `24h`/`1d` maps to today,
@@ -72,7 +72,7 @@ the host's `mx-1`.
   target `spend` (1907.99) and `total_spend` (392.05) disagree, so the old
   headline was not a trustworthy lifetime figure.
 - The 30-day total is correct: the activity endpoint pages at roughly 15 days
-  and repeats the boundary day, so the service reads every page and keeps one
-  bucket per date.
+  and can split one day across pages, so the service reads every page and sums
+  the buckets by date.
 - `GET /providers` returns confirmed targets only; unconfirmed candidates are
   logged locally rather than exposed to the sandboxed guest.

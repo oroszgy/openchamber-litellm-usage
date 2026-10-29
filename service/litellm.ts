@@ -145,11 +145,11 @@ export async function readDailyActivity(
   timezoneOffsetMinutes: number,
 ): Promise<DailyBucket[] | null> {
   const apiKey = createHash('sha256').update(target.key).digest('hex');
-  const seen = new Set<string>();
   const buckets: DailyBucket[] = [];
 
-  // The endpoint pages at roughly 15 days. 30 days needs two pages; the cap is
-  // a guard against a proxy that never clears `has_more`.
+  // The endpoint pages at roughly 15 days and can split one day across pages.
+  // Keep every bucket; `bucketRolling` sums them by date. 30 days needs two
+  // pages; the cap is a guard against a proxy that never clears `has_more`.
   for (let page = 1; page <= 4; page += 1) {
     const query = new URLSearchParams({
       api_key: apiKey,
@@ -184,8 +184,7 @@ export async function readDailyActivity(
     for (const result of results) {
       const date = (result as { date?: unknown }).date;
       const spend = (result as { metrics?: { spend?: unknown } }).metrics?.spend;
-      if (typeof date === 'string' && typeof spend === 'number' && !seen.has(date)) {
-        seen.add(date);
+      if (typeof date === 'string' && typeof spend === 'number') {
         buckets.push({ date, spend });
       }
     }

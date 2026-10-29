@@ -79,8 +79,9 @@ is involved.
 ## How spend is read
 
 - **Rolling spend** comes from `GET /user/daily/activity`, bucketed in the
-  service over local calendar days. The endpoint pages at roughly 15 days, so
-  the service reads every page and counts the boundary day once.
+  service over local calendar days. The endpoint pages at roughly 15 days and
+  can split one day across pages, so the service reads every page and sums the
+  buckets by date.
 - **Quota usage** comes from the key's own `GET /key/info`: the legacy
   `max_budget` + `budget_duration` window, and the multi-window `budget_limits`
   paired with `budget_limits_usage`. `24h`/`1d` maps to today, `7d` to the last

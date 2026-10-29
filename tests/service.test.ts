@@ -189,22 +189,23 @@ test('usage buckets the rolling windows and keeps the activity query', async () 
   expect(fake.auth[activityIndex]).toBe('Bearer sk-test');
 });
 
-test('activity pages are read to the end and the boundary date is counted once', async () => {
+test('activity pages are read to the end and a day split across them is summed', async () => {
   const fake = await fakeLitellm({
     info: { spend: 0, user_id: 'u1' },
     activity: { results: [], metadata: { has_more: false } },
   });
+  // The live endpoint can return part of a day on each page; both parts count.
   const pages: Record<number, Record<string, unknown>> = {
     1: {
       results: [
         { date: '2026-10-09', metrics: { spend: 1.2 } },
-        { date: '2026-10-08', metrics: { spend: 1.0 } },
+        { date: '2026-10-08', metrics: { spend: 0.4 } },
       ],
       metadata: { has_more: true },
     },
     2: {
       results: [
-        { date: '2026-10-08', metrics: { spend: 1.0 } },
+        { date: '2026-10-08', metrics: { spend: 0.6 } },
         { date: '2026-09-20', metrics: { spend: 3.0 } },
       ],
       metadata: { has_more: false },

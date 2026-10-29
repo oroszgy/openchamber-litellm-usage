@@ -285,7 +285,6 @@ function ratio(window) {
 }
 async function readDailyActivity(fetchImpl, target, startDate, endDate, timezoneOffsetMinutes) {
   const apiKey = createHash("sha256").update(target.key).digest("hex");
-  const seen = new Set;
   const buckets = [];
   for (let page = 1;page <= 4; page += 1) {
     const query = new URLSearchParams({
@@ -319,8 +318,7 @@ async function readDailyActivity(fetchImpl, target, startDate, endDate, timezone
     for (const result of results) {
       const date = result.date;
       const spend = result.metrics?.spend;
-      if (typeof date === "string" && typeof spend === "number" && !seen.has(date)) {
-        seen.add(date);
+      if (typeof date === "string" && typeof spend === "number") {
         buckets.push({ date, spend });
       }
     }

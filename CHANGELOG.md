@@ -26,8 +26,8 @@ the Versioning section of `AGENTS.md`.
   or inter-row gap.
 - Zero renders as `$0.00`; four decimals are kept only for a nonzero amount under
   `$0.01`.
-- The service reads **both pages** of `/user/daily/activity` and counts the
-  repeated boundary day once, so the 30-day total is a real 30-day total.
+- The service reads **every page** of `/user/daily/activity` and sums the parts
+  of a day that span pages, so the 30-day total is a real 30-day total.
 
 ### Removed
 
