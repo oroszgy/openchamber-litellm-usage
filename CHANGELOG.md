@@ -6,6 +6,38 @@ version follows [Semantic Versioning](https://semver.org/) — minor for a featu
 patch for a fix. The bump and the entry land in the same commit as the change; see
 the Versioning section of `AGENTS.md`.
 
+## 0.4.0 — 2026-10-29
+
+### Added
+
+- **Provider picker.** When more than one LiteLLM target is confirmed, a select
+  beside the section title chooses which proxy to monitor. The choice is
+  remembered per server; with one target there is no picker.
+- **Quota usage.** When the key has its own daily, weekly or monthly budget
+  window, its row shows the percentage used and the window's spend and cap,
+  e.g. `Today  $8.40 of $10.00  84%`. The 50% / 80% tone matches the native
+  Usage section.
+- A **`Total` row** for a lifetime cap (`max_budget` with no duration).
+
+### Changed
+
+- The section now uses the native Work Status row metrics: 28 px rows, 13 px
+  text, a muted label and a right-aligned tabular value, with no extra padding
+  or inter-row gap.
+- Zero renders as `$0.00`; four decimals are kept only for a nonzero amount under
+  `$0.01`.
+- The service reads **both pages** of `/user/daily/activity` and counts the
+  repeated boundary day once, so the 30-day total is a real 30-day total.
+
+### Removed
+
+- The **lifetime/window spend toggle** and its stored preference. The section
+  shows rolling spend and key budget windows only.
+- Team and member budgets, remaining budget, reset dates, soft budgets,
+  per-model and TPM/RPM limits.
+- The unconfirmed-candidate list. Only confirmed targets cross the wire; the
+  service logs why a candidate was not confirmed.
+
 ## 0.3.0 — 2026-10-16
 
 ### Added

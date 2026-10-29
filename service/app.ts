@@ -22,6 +22,8 @@ export type ServiceDeps = {
 type Answer = { status: number; body: unknown };
 type Discover = (directory: string | null) => Promise<Discovery>;
 
+const ROLLING_UNAVAILABLE = 'Rolling spend is unavailable for this key.';
+
 const error = (status: number, code: string, message: string): Answer => ({
   status,
   body: { error: { code, message } },
@@ -67,12 +69,11 @@ async function handle(deps: ServiceDeps, discover: Discover, request: IncomingMe
 }
 
 async function listProviders(discover: Discover, directory: string | null): Promise<Answer> {
-  const { confirmed, unconfirmed } = await discover(directory);
+  const { confirmed } = await discover(directory);
   const body: ProvidersResponse = {
     providers: confirmed.map(publicTarget),
     default: defaultProviderId(confirmed.map((target) => target.id)),
   };
-  if (unconfirmed.length > 0) body.rejected = unconfirmed;
   return { status: 200, body };
 }
 
@@ -87,21 +88,11 @@ async function usage(deps: ServiceDeps, discover: Discover, url: URL): Promise<A
   const timeZone = deps.env.timeZone ?? 'UTC';
   const today = localDate(now, timeZone);
 
-  const body: UsageResponse = {
-    provider: publicTarget(target),
-    asOf: now.toISOString(),
-    spend: target.info.spend,
-    spendKind: target.info.spendKind,
-  };
-
-  const rollingDegraded = {
-    figure: 'rolling',
-    code: 'rolling_unavailable',
-    message: 'Rolling spend is unavailable for this key.',
-  };
+  const body: UsageResponse = {};
+  if (target.info.budgets) body.budgets = target.info.budgets;
 
   if (!target.info.userId) {
-    body.degraded = [rollingDegraded];
+    body.notice = ROLLING_UNAVAILABLE;
   } else {
     const buckets = await readDailyActivity(
       deps.fetch,
@@ -113,7 +104,7 @@ async function usage(deps: ServiceDeps, discover: Discover, url: URL): Promise<A
     if (buckets) {
       body.rolling = bucketRolling(buckets, today);
     } else {
-      body.degraded = [rollingDegraded];
+      body.notice = ROLLING_UNAVAILABLE;
     }
   }
 
@@ -121,7 +112,7 @@ async function usage(deps: ServiceDeps, discover: Discover, url: URL): Promise<A
 }
 
 function publicTarget(target: Target): ProviderRef {
-  return { id: target.id, name: target.name, host: target.host };
+  return { id: target.id, name: target.name };
 }
 
 function send(response: ServerResponse, answer: Answer): void {

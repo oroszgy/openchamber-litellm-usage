@@ -10,10 +10,9 @@
         margin: 0;
       }
       #root {
-        padding: 8px 10px;
+        padding: 0;
         display: flex;
         flex-direction: column;
-        gap: 2px;
         font-family: inherit;
         font-size: 13px;
         line-height: 1.5;
@@ -21,8 +20,51 @@
       .llu-line,
       .llu-hint,
       .llu-error,
-      .llu-row {
+      .llu-row,
+      .llu-retry {
         margin: 0;
+      }
+      .llu-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        height: 28px;
+        padding: 0 4px;
+        color: var(--oc-muted);
+      }
+      .llu-label {
+        flex: 1 1 auto;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .llu-detail {
+        font-size: 11px;
+      }
+      .llu-value {
+        flex: 0 0 auto;
+        font-variant-numeric: tabular-nums;
+      }
+      .llu-value[data-tone='warning'] {
+        color: var(--oc-warning-text, #b45309);
+      }
+      .llu-value[data-tone='error'] {
+        color: var(--oc-error-text, #d9534f);
+      }
+      .llu-line,
+      .llu-hint,
+      .llu-error {
+        display: block;
+        height: 28px;
+        padding: 0 4px;
+        line-height: 28px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .llu-line {
+        color: var(--oc-fg);
       }
       .llu-hint {
         color: var(--oc-muted);
@@ -30,43 +72,19 @@
       .llu-error {
         color: var(--oc-error-text, #d9534f);
       }
-      .llu-row {
+      .llu-retry {
         display: flex;
         align-items: center;
-        gap: 8px;
         height: 28px;
-        color: var(--oc-muted);
-      }
-      .llu-row > span:first-child {
-        flex: 1 1 auto;
-        min-width: 0;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-      .llu-row > span:last-child {
-        flex: 0 0 auto;
-        font-variant-numeric: tabular-nums;
-      }
-      .llu-toggle,
-      .llu-retry {
-        align-self: flex-start;
-        margin-top: 2px;
-        height: 28px;
-        padding: 0 6px;
+        padding: 0 4px;
         border: none;
-        border-radius: 6px;
         background: none;
         font: inherit;
         color: var(--oc-muted);
         cursor: pointer;
       }
-      .llu-toggle:hover,
       .llu-retry:hover {
         color: var(--oc-fg);
-      }
-      .llu-retry {
-        color: var(--oc-error-text, #d9534f);
       }
     </style>
   </head>
