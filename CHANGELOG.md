@@ -22,8 +22,8 @@ the Versioning section of `AGENTS.md`.
 ### Changed
 
 - The section now uses the native Work Status row metrics: 28 px rows, 13 px
-  text, a muted label and a right-aligned tabular value, with no extra padding
-  or inter-row gap.
+  text, a muted label, a right-aligned tabular value, the same status colours,
+  and no second horizontal inset inside the host's `mx-1`.
 - Zero renders as `$0.00`; four decimals are kept only for a nonzero amount under
   `$0.01`.
 - The service reads **every page** of `/user/daily/activity` and sums the parts
