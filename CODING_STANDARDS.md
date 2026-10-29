@@ -49,6 +49,7 @@ repository URL. Never edit them by hand; regenerate and commit them instead.
 ## Language
 
 - **Use `GLOSSARY.md` terms**, and avoid their `_Avoid_` synonyms (e.g. say
-  _Lifetime spend_, not _Total spend_; _Spend_, not _Usage_ or _Cost_).
+  _Budget window_, not _limit_; _Quota used_, not _usage_; _Spend_, not
+  _cost_).
 - **The extension is "LiteLLM Usage"** — that exact name is the section title and
   the panel document title.
